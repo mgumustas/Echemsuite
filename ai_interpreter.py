@@ -30,28 +30,46 @@ Rules:
 # ─────────────────────────────────────────────────────────────
 # INTERNAL HELPER
 # ─────────────────────────────────────────────────────────────
-def _call(api_key: str, user_msg: str) -> str:
+def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
     """Call Claude via the Anthropic SDK; returns plain text."""
     try:
         import anthropic
     except ImportError:
         return "⚠️ 'anthropic' package not installed. Add it to requirements.txt."
 
+    # Fallback model chain if primary not available
+    _FALLBACK_MODELS = [
+        model,
+        "claude-opus-4-0",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-0",
+        "claude-3-opus-20240229",
+        "claude-3-5-sonnet-20241022",
+    ]
     client = anthropic.Anthropic(api_key=api_key)
-    msg = client.messages.create(
-        model  = "claude-opus-4-5",
-        max_tokens = 800,
-        system = _SYSTEM,
-        messages = [{"role": "user", "content": user_msg}],
-    )
-    return msg.content[0].text.strip()
+    last_err = None
+    for _m in _FALLBACK_MODELS:
+        try:
+            msg = client.messages.create(
+                model      = _m,
+                max_tokens = 800,
+                system     = _SYSTEM,
+                messages   = [{"role": "user", "content": user_msg}],
+            )
+            return msg.content[0].text.strip()
+        except Exception as e:
+            last_err = e
+            if "not_found" in str(e) or "404" in str(e):
+                continue   # try next model
+            raise          # other errors (auth, rate limit) → surface immediately
+    return f"⚠️ No available model found. Last error: {last_err}"
 
 
 # ─────────────────────────────────────────────────────────────
 # MODULE-SPECIFIC INTERPRETERS
 # ─────────────────────────────────────────────────────────────
 
-def interpret_cv(api_key: str, results: dict, electrode_name: str = "electrode") -> str:
+def interpret_cv(api_key: str, results: dict, electrode_name: str = "electrode", model: str = "claude-opus-4-0") -> str:
     ecsa   = results.get("ecsa", {})
     mech   = results.get("mechanism", {})
     k0     = results.get("k0", {})
@@ -76,10 +94,10 @@ Discuss:
 3. The significance of the k° value and what it says about electron-transfer kinetics.
 4. Any recommendations for optimising the electrode or the measurement protocol."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
 
 
-def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = None) -> str:
+def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = None, model: str = "claude-opus-4-0") -> str:
     if param_df is None or (hasattr(param_df, 'empty') and param_df.empty):
         return "No EIS fit parameters available for interpretation."
 
@@ -105,10 +123,10 @@ Discuss:
 3. The effective double-layer capacitance and how it reflects surface area changes.
 4. Overall quality of the impedance model fit and any anomalies."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
 
 
-def interpret_ph(api_key: str, results: dict, analyte: str = "analyte") -> str:
+def interpret_ph(api_key: str, results: dict, analyte: str = "analyte", model: str = "claude-opus-4-0") -> str:
     slope    = results.get("slope_mV_per_pH", "N/A")
     r2       = results.get("R2",              "N/A")
     mn       = results.get("ratio_m_n",       "N/A")
@@ -129,11 +147,11 @@ Discuss:
    (physiological fluids, real-sample compatibility).
 4. Any buffer or ionic-strength considerations the analyst should bear in mind."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
 
 
 def interpret_calibration(api_key: str, results: dict,
-                           analyte: str = "analyte", unit: str = "µM") -> str:
+                           analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-4-0") -> str:
     cr       = results.get("calibration", results)
     lod      = cr.get("LOD",        "N/A")
     loq      = cr.get("LOQ",        "N/A")
@@ -161,11 +179,11 @@ Discuss:
 4. Recommendations for real-sample applicability and any matrix effects
    to anticipate."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
 
 
 def interpret_standard_addition(api_key: str, results: dict,
-                                 analyte: str = "analyte", unit: str = "µM") -> str:
+                                 analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-4-0") -> str:
     c_samp = results.get("C_sample_uM", "N/A")
     r2     = results.get("R2",          "N/A")
     slope  = results.get("slope",       "N/A")
@@ -185,10 +203,10 @@ Discuss:
    speciation that should be verified before reporting the result.
 4. Confidence in the reported concentration and suggested follow-up validation."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
 
 
-def interpret_full_project(api_key: str, project: dict) -> str:
+def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-4-0") -> str:
     """Generate an executive summary for the whole project."""
     analyses = project.get("analyses", {})
     parts = []
@@ -212,4 +230,4 @@ The summary should read like the Abstract of an electroanalytical
 paper: motivation → key results → analytical performance significance.
 Keep it under 200 words."""
 
-    return _call(api_key, prompt)
+    return _call(api_key, prompt, model)
