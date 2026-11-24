@@ -302,6 +302,21 @@ with st.sidebar:
         st.caption("✅ API key saved for this session")
     else:
         st.caption("Enter key to enable AI interpretations")
+    _MODEL_OPTIONS = [
+        "claude-opus-4-0",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-6",
+        "claude-3-opus-20240229",
+        "claude-3-5-sonnet-20241022",
+    ]
+    if "ai_model" not in st.session_state:
+        st.session_state.ai_model = _MODEL_OPTIONS[0]
+    st.session_state.ai_model = st.selectbox(
+        "Model", _MODEL_OPTIONS,
+        index=_MODEL_OPTIONS.index(st.session_state.ai_model)
+              if st.session_state.ai_model in _MODEL_OPTIONS else 0,
+        key="ai_model_select"
+    )
 
     st.divider()
 
@@ -366,7 +381,8 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                  key=f"ai_{module_key}"):
         with st.spinner("Consulting the electrochemistry expert…"):
             try:
-                text = interp_fn(api_key=ak, **fn_kwargs)
+                _model = st.session_state.get("ai_model", "claude-opus-4-0")
+                text = interp_fn(api_key=ak, model=_model, **fn_kwargs)
                 proj = _cur()
                 if module_key in proj.get("analyses", {}):
                     proj["analyses"][module_key]["interpretation"] = text
