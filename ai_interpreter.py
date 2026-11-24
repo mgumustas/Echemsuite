@@ -113,22 +113,38 @@ def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = N
     except Exception:
         tbl = str(param_df)
 
-    prompt = f"""Interpret the following EIS Randles-CPE fitting results.
-Each row is a different electrode (bare → increasingly modified).
+    labels_str = ", ".join(electrode_labels) if electrode_labels else "not specified"
+
+    prompt = f"""You are interpreting electrochemical impedance spectroscopy (EIS) data
+for a manuscript targeting Analytical Chemistry, Biosensors & Bioelectronics,
+or Electrochimica Acta.
+
+Electrode series (in order): {labels_str}
+Randles-CPE circuit fitting results:
 
 {tbl}
 
-Columns typically contain: Rs (solution resistance, Ω),
-Rct (charge-transfer resistance, Ω), Q (CPE coefficient, F sⁿ),
-n (CPE exponent, dimensionless), C_eff (effective capacitance, F),
-Roughness factor, χ² goodness of fit.
+Write 3–4 paragraphs of expert commentary covering:
 
-Discuss:
-1. The trend in Rct across the electrode series and what it implies
-   about each modification step (barrier vs. facilitation of electron transfer).
-2. CPE exponent n and what deviation from n=1 means for surface homogeneity.
-3. The effective double-layer capacitance and how it reflects surface area changes.
-4. Overall quality of the impedance model fit and any anomalies."""
+1. Rs (solution resistance, Ω): confirm stability across electrodes —
+   any significant change indicates measurement artefacts or ionic-strength effects.
+
+2. Rct (charge-transfer resistance, Ω): describe the TREND across the series
+   with exact values. Explain mechanistically whether each modification step
+   increased or decreased Rct and why (surface blocking, electrocatalysis,
+   faster electron-transfer kinetics, analyte adsorption, etc.).
+   Compare Rct values to typical literature ranges for similar systems.
+
+3. CPE parameters (Q and n): interpret n — if n < 0.85 this suggests significant
+   surface roughness or inhomogeneity; if n ≈ 1 the interface is near-ideal
+   capacitive. Discuss C_eff (effective capacitance) and what changes in
+   double-layer capacitance reveal about surface area modification.
+
+4. Fit quality (χ² or residuals if present): state whether the Randles-CPE
+   model is adequate or whether a more complex circuit (Warburg, nested RC)
+   should be considered.
+
+Quote every numeric value. Use correct SI notation. Do NOT use bullet points."""
 
     return _call(api_key, prompt, model)
 
@@ -216,25 +232,98 @@ Discuss:
 def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-4-0") -> str:
     """Generate an executive summary for the whole project."""
     analyses = project.get("analyses", {})
-    parts = []
-    for key, label in [("cv","CV"),("eis","EIS"),("ph","pH"),
-                       ("cal","Calibration"),("sa","Standard Addition")]:
-        if key in analyses:
-            m = analyses[key].get("metrics", {})
-            parts.append(f"{label}: {json.dumps(m, default=str)[:300]}")
-
-    if not parts:
+    if not analyses:
         return "No analyses recorded in this project yet."
 
-    summary = "\n".join(parts)
-    prompt = f"""Write a 3-paragraph executive summary for the electrochemical
-study titled "{project.get('name','Untitled Project')}".
+    sections = []
 
-Available analysis results (abbreviated):
-{summary}
+    # CV
+    if "cv" in analyses:
+        m = analyses["cv"].get("metrics", {})
+        pds = analyses["cv"].get("param_df_str", "")
+        ecsa = m.get("ecsa", m.get("ECSA_cm2", ""))
+        b    = m.get("slope_b", m.get("b_value", ""))
+        k0   = m.get("k0_mean", m.get("k0", ""))
+        r2   = m.get("R2", m.get("r2", ""))
+        s = f"CV (Scan-Rate Study): ECSA={ecsa} cm², b={b} (log ip vs log ν), k°={k0} cm s⁻¹, R²={r2}"
+        if pds: s += f"\nFit table:\n{pds[:400]}"
+        sections.append(s)
 
-The summary should read like the Abstract of an electroanalytical
-paper: motivation → key results → analytical performance significance.
-Keep it under 200 words."""
+    # EIS
+    if "eis" in analyses:
+        m = analyses["eis"].get("metrics", {})
+        pds = analyses["eis"].get("param_df_str", "")
+        electrodes = m.get("electrodes", [])
+        # Try to pull Rct values
+        rct_vals = m.get("Rct_ohm", m.get("Rct", m.get("rct", [])))
+        rs_vals  = m.get("Rs_ohm",  m.get("Rs",  m.get("rs",  [])))
+        n_vals   = m.get("n_cpe",   m.get("n",   []))
+        s = f"EIS (Randles-CPE): electrodes={electrodes}, Rs={rs_vals}, Rct={rct_vals}, n(CPE)={n_vals}"
+        if pds: s += f"\nFit table:\n{pds[:600]}"
+        sections.append(s)
+
+    # pH
+    if "ph" in analyses:
+        m = analyses["ph"].get("metrics", {})
+        pds = analyses["ph"].get("param_df_str", "")
+        slope  = m.get("slope_mV_per_pH", m.get("slope", ""))
+        r2     = m.get("R2", m.get("r2", ""))
+        opt_ph = m.get("optimal_pH", "")
+        s = f"pH Study: Ep/pH slope={slope} mV pH⁻¹, R²={r2}, optimal pH={opt_ph}"
+        if pds: s += f"\n{pds[:300]}"
+        sections.append(s)
+
+    # Calibration
+    if "cal" in analyses:
+        m = analyses["cal"].get("metrics", {})
+        lod  = m.get("LOD", m.get("lod", ""))
+        loq  = m.get("LOQ", m.get("loq", ""))
+        sens = m.get("slope", m.get("sensitivity", ""))
+        r    = m.get("r", m.get("R2", ""))
+        lr   = m.get("linear_range", ["", ""])
+        sections.append(
+            f"Calibration: sensitivity={sens} µA µM⁻¹, LOD={lod} µM, LOQ={loq} µM, "
+            f"r={r}, linear range={lr[0]}–{lr[1]} µM"
+        )
+
+    # Standard addition
+    if "sa" in analyses:
+        m = analyses["sa"].get("metrics", {})
+        c   = m.get("C_sample_uM", m.get("concentration", ""))
+        r2  = m.get("R2", "")
+        sections.append(f"Standard Addition: [sample]={c} µM, R²={r2}")
+
+    summary_block = "\n\n".join(sections)
+    proj_name = project.get("name", "Untitled Project")
+
+    prompt = f"""You are writing the Abstract for a manuscript about the electrochemical
+sensor study titled "{proj_name}".
+
+Experimental results available:
+{summary_block}
+
+Write exactly 3 paragraphs in the style required by Biosensors & Bioelectronics
+or Analytical Chemistry:
+
+Paragraph 1 — Motivation and electrode design strategy (2–3 sentences):
+  State the analytical problem addressed, the electrode material/modification
+  approach, and why this system was chosen.
+
+Paragraph 2 — Key electrochemical characterisation findings (3–4 sentences):
+  Report the most important numbers: Rct changes from EIS (cite exact Ω values),
+  ECSA and b-value from CV, pH dependence slope vs Nernst theory.
+  Use precise SI units throughout.
+
+Paragraph 3 — Analytical performance and practical relevance (2–3 sentences):
+  State LOD, LOQ, linear dynamic range, and sensitivity.
+  Compare to at least one literature benchmark if the data suggest it.
+  End with the key take-away sentence about applicability (real samples, clinical or
+  environmental significance).
+
+RULES:
+- Do NOT use bullet points or headers.
+- Quote every numeric value present in the data above.
+- If a value is missing, omit that parameter rather than saying "data not provided".
+- Total length: 180–220 words."""
 
     return _call(api_key, prompt, model)
