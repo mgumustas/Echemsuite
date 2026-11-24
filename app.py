@@ -1,11 +1,12 @@
 """
 SilverstoneLab — Electrochemical Analysis Suite
-Streamlit web application  v3.0
-Features: project folders · AI expert commentary · PDF + Word reports
+Streamlit web application  v3.1
+Features: multi-user auth · project folders · AI expert commentary · PDF + Word reports
 """
 
 import streamlit as st
 import tempfile, os, sys, io, zipfile, re, json, datetime
+import yaml
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -51,39 +52,108 @@ st.markdown("""
 .interp-box { background:#f8f9ff;border-left:4px solid #2e75b6;
               padding:14px 18px;border-radius:0 8px 8px 0;
               font-style:italic;line-height:1.6; }
+.login-box { max-width:400px;margin:4rem auto;padding:2rem;
+             border:1px solid #dde;border-radius:12px;
+             background:#f8faff;text-align:center; }
 </style>
 <div class="wm">© SilverstoneLab</div>
 """, unsafe_allow_html=True)
 
+# ═══════════════════════════════════════════════════════════
+# AUTHENTICATION
+# ═══════════════════════════════════════════════════════════
+def _load_config():
+    cfg_path = Path(__file__).parent / "config.yaml"
+    with open(cfg_path) as f:
+        return yaml.safe_load(f)
+
+def _save_config(cfg):
+    cfg_path = Path(__file__).parent / "config.yaml"
+    with open(cfg_path, "w") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+try:
+    import streamlit_authenticator as stauth
+    _AUTH_AVAILABLE = True
+except ImportError:
+    _AUTH_AVAILABLE = False
+
+if _AUTH_AVAILABLE:
+    _cfg = _load_config()
+    _authenticator = stauth.Authenticate(
+        _cfg["credentials"],
+        _cfg["cookie"]["name"],
+        _cfg["cookie"]["key"],
+        _cfg["cookie"]["expiry_days"],
+    )
+    _auth_result = _authenticator.login(location="main")
+    # Support both old (tuple) and new (None) return styles
+    if isinstance(_auth_result, tuple):
+        _auth_name, _auth_status, _auth_username = _auth_result
+    else:
+        _auth_name     = st.session_state.get("name")
+        _auth_status   = st.session_state.get("authentication_status")
+        _auth_username = st.session_state.get("username")
+
+    if _auth_status is False:
+        st.error("❌ Username or password is incorrect.")
+        st.stop()
+    elif _auth_status is None:
+        st.markdown("""
+        <div style='text-align:center;margin-top:3rem'>
+        <h2>⚗️ SilverstoneLab</h2>
+        <p style='color:#555'>Electrochemical Analysis Suite</p>
+        <p style='color:#888;font-size:0.9rem'>Enter your credentials above to continue.</p>
+        </div>""", unsafe_allow_html=True)
+        st.stop()
+    # ── logged in ───────────────────────────────────────────
+    _current_user     = _auth_username or "guest"
+    _current_name     = _auth_name or _current_user
+    _current_role     = (_cfg["credentials"]["usernames"]
+                         .get(_current_user, {}).get("role", "user"))
+else:
+    # Auth package not installed — allow access as guest (dev mode)
+    _current_user = "guest"
+    _current_name = "Guest"
+    _current_role = "user"
+
 
 # ═══════════════════════════════════════════════════════════
-# SESSION STATE — PROJECTS
+# SESSION STATE — PROJECTS  (scoped per logged-in user)
 # ═══════════════════════════════════════════════════════════
+def _user_key(suffix): return f"{_current_user}__{suffix}"
+
 def _init_state():
-    if "projects" not in st.session_state:
-        st.session_state.projects = {}
-    if "current_project" not in st.session_state:
-        _new_project("My First Study")
+    pk = _user_key("projects")
+    cp = _user_key("current_project")
+    if pk not in st.session_state:
+        st.session_state[pk] = {}
+    if cp not in st.session_state or st.session_state[cp] not in st.session_state[pk]:
+        _new_project(f"{_current_name}'s First Study")
     if "api_key" not in st.session_state:
         st.session_state.api_key = ""
 
 def _new_project(name: str):
     pid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    st.session_state.projects[pid] = {
+    st.session_state[_user_key("projects")][pid] = {
         "name": name, "created": str(datetime.date.today()),
         "notes": "", "analyses": {}, "executive_summary": "",
+        "owner": _current_user,
     }
-    st.session_state.current_project = pid
+    st.session_state[_user_key("current_project")] = pid
     return pid
 
+def _projects() -> dict:
+    return st.session_state[_user_key("projects")]
+
 def _cur() -> dict:
-    return st.session_state.projects.get(st.session_state.current_project, {})
+    return _projects().get(
+        st.session_state.get(_user_key("current_project"), ""), {})
 
 def _save_analysis(key: str, metrics: dict,
                    plot_dir: str | None = None,
                    param_df=None,
                    interpretation: str = ""):
-    """Store analysis result into the current project."""
     proj = _cur()
     if not proj: return
     plot_bytes = []
@@ -91,11 +161,11 @@ def _save_analysis(key: str, metrics: dict,
         for f in sorted(Path(plot_dir).glob("*.png")):
             plot_bytes.append(f.read_bytes())
     proj["analyses"][key] = {
-        "metrics":      metrics,
-        "plot_bytes":   plot_bytes,
-        "param_df_str": param_df.to_string() if param_df is not None else "",
+        "metrics":        metrics,
+        "plot_bytes":     plot_bytes,
+        "param_df_str":   param_df.to_string() if param_df is not None else "",
         "interpretation": interpretation,
-        "timestamp":    datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "timestamp":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
 _init_state()
@@ -107,20 +177,28 @@ _init_state()
 with st.sidebar:
     st.markdown("## ⚗️ SilverstoneLab")
     st.markdown("**Electrochemical Analysis Suite**")
-    st.caption("v3.0 — Projects · AI · Reports")
+    st.caption("v3.1 — Projects · AI · Reports")
+    st.divider()
+
+    # ── User info + logout ───────────────────────────────────
+    role_badge = "👑 Admin" if _current_role == "admin" else "👤"
+    st.markdown(f"**{role_badge} {_current_name}**")
+    if _AUTH_AVAILABLE:
+        _authenticator.logout("🚪 Log out", location="sidebar")
     st.divider()
 
     # ── Project management ───────────────────────────────────
-    st.markdown("### 📁 Projects")
-    proj_names = {pid: p["name"] for pid,p in st.session_state.projects.items()}
+    st.markdown("### 📁 My Projects")
+    proj_names = {pid: p["name"] for pid,p in _projects().items()}
     if proj_names:
+        cp_key = _user_key("current_project")
         cur_pid = st.selectbox("Active project", list(proj_names.keys()),
                                format_func=lambda x: proj_names[x],
                                index=list(proj_names.keys()).index(
-                                   st.session_state.current_project)
-                               if st.session_state.current_project in proj_names else 0,
+                                   st.session_state.get(cp_key,""))
+                               if st.session_state.get(cp_key,"") in proj_names else 0,
                                key="proj_select")
-        st.session_state.current_project = cur_pid
+        st.session_state[cp_key] = cur_pid
 
     new_name = st.text_input("New project name", key="new_proj_name",
                               placeholder="e.g. Mn₃O₄-SPCE Study")
@@ -140,6 +218,25 @@ with st.sidebar:
                 cp["notes"] = new_notes
                 st.success("Saved")
 
+    # ── Password change ──────────────────────────────────────
+    with st.expander("🔑 Change my password"):
+        if _AUTH_AVAILABLE:
+            try:
+                _authenticator.reset_password(_current_username if hasattr(
+                    _authenticator,'_current_username') else _current_user,
+                    location="sidebar")
+                st.success("Password updated!")
+            except Exception:
+                # newer API
+                try:
+                    if _authenticator.reset_password(_current_user, location="sidebar"):
+                        _save_config(_cfg)
+                        st.success("Password updated!")
+                except Exception as e:
+                    st.caption(str(e))
+        else:
+            st.caption("Auth not available in dev mode.")
+
     with st.expander("💾 Export / Import project"):
         cp = _cur()
         if cp:
@@ -150,6 +247,47 @@ with st.sidebar:
                                f"{cp.get('name','project')}.json",
                                "application/json")
         st.caption("Plots stay in session memory only. Export is metadata + interpretations.")
+
+    # ── Admin panel ─────────────────────────────────────────
+    if _current_role == "admin":
+        with st.expander("👑 Admin — Manage users"):
+            st.caption("Add a new user to config.yaml")
+            new_uname = st.text_input("Username (no spaces)", key="adm_uname")
+            new_dname = st.text_input("Display name", key="adm_dname")
+            new_email = st.text_input("Email (optional)", key="adm_email")
+            new_pw    = st.text_input("Temporary password", key="adm_pw",
+                                       type="password")
+            if st.button("➕ Add user", key="adm_add"):
+                if new_uname and new_pw:
+                    try:
+                        import bcrypt as _bcrypt
+                        hashed = _bcrypt.hashpw(
+                            new_pw.encode(), _bcrypt.gensalt(12)).decode()
+                        cfg2 = _load_config()
+                        cfg2["credentials"]["usernames"][new_uname] = {
+                            "name": new_dname or new_uname,
+                            "email": new_email or "",
+                            "password": hashed,
+                            "role": "user",
+                        }
+                        _save_config(cfg2)
+                        st.success(f"✅ User '{new_uname}' added. "
+                                   "They can log in after the next app restart.")
+                    except Exception as e:
+                        st.error(str(e))
+                else:
+                    st.warning("Username and password are required.")
+
+            st.divider()
+            st.caption("Current users:")
+            try:
+                cfg3 = _load_config()
+                for uname, udata in cfg3["credentials"]["usernames"].items():
+                    role = udata.get("role","user")
+                    badge = "👑" if role=="admin" else "👤"
+                    st.markdown(f"- {badge} **{uname}** ({udata.get('name','')})")
+            except Exception:
+                pass
 
     st.divider()
 
@@ -168,7 +306,7 @@ with st.sidebar:
     st.divider()
 
     # ── Navigation ───────────────────────────────────────────
-    page = st.radio("navigate", label_visibility="collapsed", options=[
+    page = st.radio(f"navigate_{_current_user}", label_visibility="collapsed", options=[
         "🏠  Home",
         "📈  CV — Scan Rate Study",
         "🔵  EIS — Impedance",
