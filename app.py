@@ -595,7 +595,9 @@ elif page == "🔵  EIS — Impedance":
         with st.spinner("Fitting…"):
             out=os.path.join(tmpdir,"eis_out"); os.makedirs(out,exist_ok=True)
             try:
-                param_df=run_eis_analysis(file_dict,out,sign_zimag=sign_z)
+                _eis_result=run_eis_analysis(file_dict,out,sign_zimag=sign_z)
+                param_df = _eis_result[0] if isinstance(_eis_result, tuple) else _eis_result
+                fit_results = _eis_result[1] if isinstance(_eis_result, tuple) and len(_eis_result)>1 else None
                 st.success("✅ Done — results saved to project")
                 if param_df is not None and not param_df.empty:
                     st.markdown('<div class="sec">Fit parameters</div>',
