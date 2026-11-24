@@ -1,0 +1,618 @@
+"""
+=============================================================
+ANALİTİK PERFORMANS MODÜLÜ
+=============================================================
+Ankara University / FS3P Lab
+
+İçerik:
+  - Kalibrasyon eğrisi (lineer regresyon)
+  - LOD = 3σ/m,  LOQ = 10σ/m
+  - Hassasiyet (normalize edilmiş: μA μM⁻¹ cm⁻²)
+  - İntra-day ve inter-day %RSD
+  - Geri kazanım (recovery) hesabı
+  - Standart ilave (standard addition) metodu
+  - Yayına hazır tablolar ve grafikler
+
+Giriş CSV formatı (kalibrasyon):
+  concentration_uM, ip_1, ip_2, ip_3  (tekrarlar sütunlarda)
+  VEYA her tekrar için satır olarak:
+  concentration_uM, ip_uA, run (tekrar numarası)
+=============================================================
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import stats
+import os
+import warnings
+warnings.filterwarnings('ignore')
+
+plt.rcParams.update({
+    'font.family': 'sans-serif', 'font.size': 12,
+    'axes.linewidth': 1.2, 'axes.labelsize': 13,
+    'xtick.direction': 'in', 'ytick.direction': 'in',
+    'figure.dpi': 150, 'savefig.dpi': 300, 'savefig.bbox': 'tight',
+})
+
+COLORS = ['#1f4e79', '#c55a11', '#375623', '#7030a0', '#843c0c',
+          '#1f77b4', '#ff7f0e', '#2ca02c']
+
+WATERMARK_TEXT  = '© SilverstoneLab'
+WATERMARK_ALPHA = 0.18
+
+def _add_watermark(fig):
+    """Her sekle SilverstoneLab filigrani ekler."""
+    fig.text(0.98, 0.01, WATERMARK_TEXT,
+             fontsize=8, color='#1f4e79', alpha=WATERMARK_ALPHA,
+             ha='right', va='bottom', style='italic',
+             transform=fig.transFigure)
+
+
+# ══════════════════════════════════════════════════════════════
+# 1. VERİ YÜKLEME
+# ══════════════════════════════════════════════════════════════
+
+def load_calibration_data(filepath_or_dict):
+    """
+    Kalibrasyon verisini yükler.
+
+    Kabul edilen formatlar:
+
+    FORMAT A — Geniş tablo (tekrarlar sütunlarda):
+      Konsantrasyon(uM), ip_run1(uA), ip_run2(uA), ip_run3(uA)
+
+    FORMAT B — Uzun tablo (her satır bir ölçüm):
+      Konsantrasyon(uM), ip(uA), Gün
+
+    FORMAT C — dict olarak doğrudan:
+      {konsantrasyon: [ip1, ip2, ip3], ...}
+
+    Returns
+    -------
+    DataFrame: 'conc_uM', 'ip_uA_mean', 'ip_uA_std', 'ip_uA_values' (list)
+    """
+    if isinstance(filepath_or_dict, dict):
+        rows = []
+        for conc, vals in filepath_or_dict.items():
+            vals = np.array(vals, dtype=float)
+            rows.append({
+                'conc_uM':      float(conc),
+                'ip_uA_mean':   vals.mean(),
+                'ip_uA_std':    vals.std(ddof=1),
+                'ip_uA_values': vals.tolist(),
+                'n_rep':        len(vals)
+            })
+        return pd.DataFrame(rows).sort_values('conc_uM').reset_index(drop=True)
+
+    df = pd.read_csv(filepath_or_dict, comment='#')
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    # FORMAT A tespiti: 3+ sütun ve sütunlardan biri "run"/"day" değilse
+    conc_col = df.columns[0]
+    value_cols = [c for c in df.columns[1:] if 'conc' not in c]
+
+    rows = []
+    for _, row in df.iterrows():
+        vals = row[value_cols].dropna().astype(float).values
+        rows.append({
+            'conc_uM':      float(row[conc_col]),
+            'ip_uA_mean':   vals.mean(),
+            'ip_uA_std':    vals.std(ddof=1) if len(vals) > 1 else 0.0,
+            'ip_uA_values': vals.tolist(),
+            'n_rep':        len(vals)
+        })
+
+    return pd.DataFrame(rows).sort_values('conc_uM').reset_index(drop=True)
+
+# ══════════════════════════════════════════════════════════════
+# 2. KALİBRASYON VE LOD/LOQ
+# ══════════════════════════════════════════════════════════════
+
+def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=None,
+                          unit='μM', output_dir='.'):
+    """
+    Kalibrasyon eğrisi, LOD, LOQ, hassasiyet hesabı.
+
+    LOD = 3 × S_y_x / m
+    LOQ = 10 × S_y_x / m
+
+    Burada S_y_x = √(Σ(yi-ŷi)² / (n-2))  (regresyon standart hatası)
+    Bu IUPAC tarafından önerilen en güvenilir yaklaşımdır.
+
+    Parameters
+    ----------
+    cal_data        : DataFrame, load_calibration_data() çıktısı
+    analyte_name    : str
+    electrode_area_cm2 : float, normalize edilmiş hassasiyet için (None → atla)
+    unit            : str, konsantrasyon birimi
+
+    Returns
+    -------
+    dict: slope, intercept, R, R2, LOD, LOQ, sensitivity
+    """
+    C = cal_data['conc_uM'].values
+    ip_mean = cal_data['ip_uA_mean'].values
+
+    slope, intercept, r, p_val, se = stats.linregress(C, ip_mean)
+    r_sq = r**2
+
+    # Regresyon standart hatası (S_y_x)
+    ip_pred = slope * C + intercept
+    residuals = ip_mean - ip_pred
+    s_yx = np.sqrt(np.sum(residuals**2) / (len(C) - 2))
+
+    # LOD ve LOQ
+    lod = 3 * s_yx / slope
+    loq = 10 * s_yx / slope
+
+    print("\n" + "═"*55)
+    print(f"KALİBRASYON ANALİZİ — {analyte_name}")
+    print("═"*55)
+    print(f"\nLineer aralık : {C.min():.4g} – {C.max():.4g} {unit}")
+    print(f"Denklem       : ip = {slope:.4f} × C + {intercept:.4f}  (μA, {unit})")
+    print(f"r             : {r:.6f}")
+    print(f"R²            : {r_sq:.6f}")
+    print(f"Eğim (m)      : {slope:.6f} μA/{unit}")
+    print(f"S_y,x         : {s_yx:.6f} μA")
+    print(f"\n▶ LOD         : {lod:.4f} {unit}")
+    print(f"▶ LOQ         : {loq:.4f} {unit}")
+
+    sensitivity = slope
+    if electrode_area_cm2:
+        sens_normalized = slope / electrode_area_cm2
+        print(f"\n▶ Hassasiyet  : {slope:.4f} μA/{unit}")
+        print(f"▶ Norm. hass. : {sens_normalized:.4f} μA/{unit}·cm²")
+        sensitivity = sens_normalized
+
+    # Artıklar grafiği (residual plot)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Kalibrasyon eğrisi
+    ax1 = axes[0]
+    C_fit = np.linspace(C.min()*0.9, C.max()*1.1, 200)
+    ip_fit = slope * C_fit + intercept
+
+    # Hata çubukları
+    if 'ip_uA_std' in cal_data.columns:
+        ax1.errorbar(C, ip_mean, yerr=cal_data['ip_uA_std'].values,
+                     fmt='o', color=COLORS[0], capsize=4, label='Mean ± SD',
+                     markersize=7, zorder=5)
+    else:
+        ax1.scatter(C, ip_mean, color=COLORS[0], s=70, zorder=5, label='Experimental')
+
+    ax1.plot(C_fit, ip_fit, color=COLORS[1], linewidth=2,
+             label=f'ip = {slope:.4f}C + {intercept:.4f}\nr = {r:.5f}')
+
+    # %95 güven aralığı (prediction interval)
+    n_pts   = len(C)
+    t_crit  = 2.0   # ~t_{0.025, n-2} ≈ 2 for n≥10
+    se_pred = s_yx * np.sqrt(1 + 1/n_pts + (C_fit - C.mean())**2 / np.sum((C - C.mean())**2))
+    ax1.fill_between(C_fit, ip_fit - t_crit*se_pred, ip_fit + t_crit*se_pred,
+                     alpha=0.12, color=COLORS[1], label='95% PI')
+
+    # LOD ve LOQ çizgileri
+    ax1.axvline(lod, color='green', linestyle=':', linewidth=1.5,
+                label=f'LOD = {lod:.4f} {unit}')
+    ax1.axvline(loq, color='orange', linestyle=':', linewidth=1.5,
+                label=f'LOQ = {loq:.4f} {unit}')
+
+    ax1.set_xlabel(f'[{analyte_name}] ({unit})')
+    ax1.set_ylabel('i$_p$ (μA)')
+    ax1.set_title(f'Calibration Curve — {analyte_name}')
+    ax1.legend(fontsize=8)
+
+    # Artıklar grafiği
+    ax2 = axes[1]
+    ax2.scatter(C, residuals, color=COLORS[2], s=70)
+    ax2.axhline(0, color='black', linewidth=1.2)
+    ax2.axhline(s_yx, color='gray', linestyle='--', linewidth=1, label=f'+S_y,x')
+    ax2.axhline(-s_yx, color='gray', linestyle='--', linewidth=1, label=f'−S_y,x')
+    ax2.set_xlabel(f'[{analyte_name}] ({unit})')
+    ax2.set_ylabel('Residuals (μA)')
+    ax2.set_title('Residual Plot\n(Random dağılım → doğrusallık OK)')
+    ax2.legend(fontsize=9)
+
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, 'calibration_curve.png')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n  Grafik kaydedildi: {out_path}")
+
+    return {
+        'analyte':       analyte_name,
+        'slope':         slope,
+        'intercept':     intercept,
+        'r':             r,
+        'R2':            r_sq,
+        's_yx':          s_yx,
+        'LOD':           lod,
+        'LOQ':           loq,
+        'sensitivity':   sensitivity,
+        'linear_range':  (C.min(), C.max()),
+        'unit':          unit
+    }
+
+# ══════════════════════════════════════════════════════════════
+# 3. %RSD (Tekrarlanabilirlik / Yeniden Üretilebilirlik)
+# ══════════════════════════════════════════════════════════════
+
+def rsd_analysis(data_dict, label='Repeatability'):
+    """
+    %RSD hesabı (intra-day, inter-day veya electrode-to-electrode).
+
+    Parameters
+    ----------
+    data_dict : dict
+        Basit örnek: {'intra_day': [15.2, 15.4, 15.1, 15.3, 15.2]}
+        Çoklu gün  : {'Day 1': [15.2, 15.3], 'Day 2': [15.1, 15.4], ...}
+
+    Returns
+    -------
+    DataFrame: ortalama, SD, %RSD
+    """
+    print(f"\n{'─'*45}")
+    print(f"{label} (%RSD)")
+    print(f"{'─'*45}")
+
+    rows = []
+    all_values = []
+
+    for key, vals in data_dict.items():
+        vals = np.array(vals, dtype=float)
+        mean = vals.mean()
+        std  = vals.std(ddof=1) if len(vals) > 1 else 0.0
+        rsd  = (std / mean) * 100 if mean != 0 else 0.0
+        all_values.extend(vals.tolist())
+        rows.append({'Group': key, 'Mean (μA)': f'{mean:.4f}',
+                     'SD (μA)': f'{std:.4f}', '%RSD': f'{rsd:.2f}'})
+        print(f"  {key}: {mean:.4f} ± {std:.4f} μA  (%RSD = {rsd:.2f}%)")
+
+    # Toplam %RSD
+    all_arr = np.array(all_values)
+    total_rsd = (all_arr.std(ddof=1) / all_arr.mean()) * 100
+    print(f"  TOPLAM %RSD = {total_rsd:.2f}%")
+
+    if total_rsd < 3:
+        print("  ✓ Mükemmel (< 3%)")
+    elif total_rsd < 5:
+        print("  ✓ Kabul edilebilir (< 5%)")
+    else:
+        print("  ✗ Yüksek (> 5%) — kontrol gerekli")
+
+    return pd.DataFrame(rows), total_rsd
+
+# ══════════════════════════════════════════════════════════════
+# 4. GERİ KAZANIM (RECOVERY)
+# ══════════════════════════════════════════════════════════════
+
+def recovery_analysis(recovery_data, slope, intercept, analyte_name='Analyte',
+                       unit='μM', output_dir='.'):
+    """
+    Spike recovery hesabı.
+
+    Recovery% = (C_found / C_added) × 100
+
+    C_found, kalibrasyon eğrisinden ip → C dönüşümüyle:
+    C_found = (ip_measured - intercept) / slope
+
+    Parameters
+    ----------
+    recovery_data : dict veya DataFrame
+        dict formatı:
+        {
+          'Matriksler': ['Serum', 'İdrar', 'Su'],
+          'spike_uM':   [1.0, 1.0, 1.0],
+          'ip_uA':      [[ip1, ip2, ip3], ...]  ← her matriksde 3 ölçüm
+        }
+        DataFrame: matrix, spike_uM, ip_1_uA, ip_2_uA, ip_3_uA
+
+    Returns
+    -------
+    DataFrame: Matriksler, spike_uM, C_found, Recovery%, %RSD
+    """
+    if isinstance(recovery_data, dict):
+        rows_input = []
+        for mat, spike, ip_vals in zip(
+            recovery_data['Matriksler'],
+            recovery_data['spike_uM'],
+            recovery_data['ip_uA']
+        ):
+            rows_input.append({
+                'Matrix': mat,
+                'C_added': spike,
+                'ip_vals': np.array(ip_vals)
+            })
+    else:
+        rows_input = []
+        for _, row in recovery_data.iterrows():
+            ip_cols = [c for c in row.index if 'ip' in c.lower()]
+            rows_input.append({
+                'Matrix': row.iloc[0],
+                'C_added': float(row.iloc[1]),
+                'ip_vals': row[ip_cols].dropna().astype(float).values
+            })
+
+    print(f"\n{'═'*65}")
+    print(f"GERİ KAZANIM ANALİZİ — {analyte_name}")
+    print("═"*65)
+    print(f"{'Matriksler':<18} {'C_ekl.':>8} {'C_bul.':>8} {'Rec%':>8} {'%RSD':>8}")
+    print(f"{'':18} {f'({unit})':>8} {f'({unit})':>8} {'':>8} {'':>8}")
+    print("-"*65)
+
+    result_rows = []
+    for item in rows_input:
+        ip_arr = item['ip_vals']
+        c_found_arr = (ip_arr - intercept) / slope  # kalibrasyon eğrisinden geri hesap
+        c_found_mean = c_found_arr.mean()
+        c_found_std  = c_found_arr.std(ddof=1) if len(c_found_arr) > 1 else 0.0
+
+        rec = (c_found_mean / item['C_added']) * 100
+        rsd = (c_found_std / c_found_mean) * 100 if c_found_mean != 0 else 0.0
+
+        print(f"{item['Matrix']:<18} {item['C_added']:>8.4f} {c_found_mean:>8.4f} "
+              f"{rec:>8.2f} {rsd:>8.2f}")
+
+        result_rows.append({
+            'Matrix':          item['Matrix'],
+            f'C_added ({unit})':  f"{item['C_added']:.4f}",
+            f'C_found ({unit})':  f"{c_found_mean:.4f} ± {c_found_std:.4f}",
+            'Recovery (%)':    f"{rec:.2f}",
+            '%RSD':            f"{rsd:.2f}"
+        })
+
+    df_result = pd.DataFrame(result_rows)
+    out_path = os.path.join(output_dir, 'recovery_table.csv')
+    df_result.to_csv(out_path, index=False)
+    print(f"\n  Tablo kaydedildi: {out_path}")
+    print(f"  Hedef: Recovery 97–103%,  %RSD < 5%")
+
+    return df_result
+
+# ══════════════════════════════════════════════════════════════
+# 5. STANDART İLAVE METODU
+# ══════════════════════════════════════════════════════════════
+
+def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
+                       analyte_name='Analyte', output_dir='.'):
+    """
+    Standart ilave metodu ile numunedeki konsantrasyon hesabı.
+
+    İdeal olarak bilinmeyen numune bir ölçüm alır (ip_0),
+    sonra artan konsantrasyonlarda standart eklenir.
+
+    Grafik: ip vs C_eklenen → x-eksenini kestiği nokta = −C_numune
+
+    Parameters
+    ----------
+    additions_uM : array-like
+        Eklenen standart konsantrasyonları (μM), 0 dahil (orijinal numune)
+    ip_uA : array-like
+        Her ekleme için ölçülen peak akımı (μA)
+    sample_volume_mL : float
+        Numune hacmi
+
+    Returns
+    -------
+    dict: C_sample, grafik
+    """
+    C_add = np.array(additions_uM, dtype=float)
+    ip    = np.array(ip_uA, dtype=float)
+
+    slope, intercept, r, p_val, se = stats.linregress(C_add, ip)
+    r_sq = r**2
+
+    # Numune konsantrasyonu: x-eksenini kesme noktası = −C_sample
+    # ip = slope × C_add + intercept = 0  →  C_add_xintercept = −intercept/slope  (negatif)
+    # C_sample = |x-intercept| = intercept / slope  (pozitif)
+    C_sample = intercept / slope
+
+    print(f"\n{'═'*55}")
+    print(f"STANDART İLAVE METODU — {analyte_name}")
+    print("═"*55)
+    print(f"Denklem  : ip = {slope:.4f} × C + {intercept:.4f}")
+    print(f"R²       : {r_sq:.6f}")
+    print(f"\n▶ Numunedeki {analyte_name} = {C_sample:.4f} μM")
+
+    # Grafik
+    fig, ax = plt.subplots(figsize=(7, 5))
+    C_fit = np.linspace(-C_sample*1.3, C_add.max()*1.1, 200)
+    ip_fit = slope * C_fit + intercept
+
+    ax.scatter(C_add, ip, color=COLORS[0], s=80, zorder=5, label='Experimental')
+    ax.plot(C_fit[C_fit >= 0], ip_fit[C_fit >= 0], color=COLORS[1], linewidth=2)
+    ax.plot(C_fit[C_fit <= 0], ip_fit[C_fit <= 0], color=COLORS[1], linewidth=2,
+            linestyle='--', alpha=0.6)
+
+    # Kesim noktası
+    ax.scatter(-C_sample, 0, color='red', s=120, zorder=6, marker='*',
+               label=f'C$_{{sample}}$ = {C_sample:.4f} μM')
+    ax.axhline(0, color='gray', linewidth=0.8)
+    ax.axvline(-C_sample, color='red', linewidth=1, linestyle=':', alpha=0.7)
+
+    ax.set_xlabel(f'C$_{{added}}$ ({analyte_name}) (μM)')
+    ax.set_ylabel('i$_p$ (μA)')
+    ax.set_title(f'Standard Addition — {analyte_name}')
+    ax.legend(fontsize=9)
+
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, 'standard_addition.png')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Grafik: {out_path}")
+
+    return {'C_sample_uM': C_sample, 'slope': slope, 'R2': r_sq}
+
+# ══════════════════════════════════════════════════════════════
+# 6. KOMPLE ANALİTİK PERFORMANS
+# ══════════════════════════════════════════════════════════════
+
+def run_analytical_performance(calibration_source, analyte_name='Analyte',
+                                electrode_area_cm2=None, unit='μM',
+                                rsd_data=None, recovery_data=None,
+                                std_addition_data=None,
+                                output_dir='results_analytical'):
+    """
+    Tüm analitik performans hesaplarını çalıştır.
+
+    Parameters
+    ----------
+    calibration_source : str (CSV) veya dict {conc: [ip1,ip2,...]}
+    analyte_name : str
+    electrode_area_cm2 : float, normalize hassasiyet için
+    unit : str
+    rsd_data : dict {'intra': {'Day1':[...]}, 'inter': {'Day1':[...],...}}
+    recovery_data : dict
+    std_addition_data : dict {'additions_uM': [...], 'ip_uA': [...]}
+    output_dir : str
+
+    Returns
+    -------
+    dict: tüm sonuçlar
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"\n{'█'*55}")
+    print("  ANALİTİK PERFORMANS ANALİZİ BAŞLADI")
+    print(f"{'█'*55}")
+
+    # 1. Kalibrasyon
+    if isinstance(calibration_source, (str,)):
+        cal_data = load_calibration_data(calibration_source)
+    else:
+        cal_data = load_calibration_data(calibration_source)
+
+    cal_results = calibration_analysis(
+        cal_data, analyte_name=analyte_name,
+        electrode_area_cm2=electrode_area_cm2, unit=unit,
+        output_dir=output_dir
+    )
+    slope     = cal_results['slope']
+    intercept = cal_results['intercept']
+
+    # 2. %RSD
+    rsd_results = {}
+    if rsd_data:
+        for rsd_type, data in rsd_data.items():
+            df_rsd, total = rsd_analysis(data, label=rsd_type)
+            rsd_results[rsd_type] = total
+            df_rsd.to_csv(os.path.join(output_dir, f'rsd_{rsd_type}.csv'), index=False)
+
+    # 3. Geri kazanım
+    rec_df = None
+    if recovery_data:
+        rec_df = recovery_analysis(
+            recovery_data, slope, intercept,
+            analyte_name=analyte_name, unit=unit, output_dir=output_dir
+        )
+
+    # 4. Standart ilave
+    std_add_results = None
+    if std_addition_data:
+        std_add_results = standard_addition(
+            additions_uM=std_addition_data['additions_uM'],
+            ip_uA=std_addition_data['ip_uA'],
+            analyte_name=analyte_name,
+            output_dir=output_dir
+        )
+
+    # Özet tablosu (yayın için)
+    summary = {
+        'Linear range':              f"{cal_results['linear_range'][0]:.4g}–{cal_results['linear_range'][1]:.4g} {unit}",
+        'Regression equation':       f"ip = {slope:.4f}C + {intercept:.4f}",
+        'Correlation coefficient (r)': f"{cal_results['r']:.6f}",
+        'LOD':                       f"{cal_results['LOD']:.4f} {unit}",
+        'LOQ':                       f"{cal_results['LOQ']:.4f} {unit}",
+        'Sensitivity':               f"{slope:.4f} μA/{unit}",
+    }
+    if electrode_area_cm2:
+        summary['Norm. Sensitivity'] = f"{cal_results['sensitivity']:.4f} μA/{unit}·cm²"
+    for k, v in rsd_results.items():
+        summary[f'%RSD ({k})'] = f"{v:.2f}%"
+
+    summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Value'])
+    summary_path = os.path.join(output_dir, 'analytical_performance_summary.csv')
+    summary_df.to_csv(summary_path)
+
+    # Excel özet (opsiyonel — pandas + openpyxl gerekli)
+    try:
+        xl_path = os.path.join(output_dir, 'analytical_performance_summary.xlsx')
+        with pd.ExcelWriter(xl_path, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, sheet_name='Performance')
+            cal_data.to_excel(writer, sheet_name='Calibration_Data', index=False)
+            if rec_df is not None:
+                rec_df.to_excel(writer, sheet_name='Recovery', index=False)
+        print(f"  Excel özeti → {xl_path}")
+    except Exception:
+        pass   # openpyxl yoksa sessizce atla
+
+    print(f"\n{'═'*55}")
+    print("ANALİTİK PERFORMANS ÖZET")
+    print("═"*55)
+    for k, v in summary.items():
+        print(f"  {k:<35}: {v}")
+    print(f"\nTam sonuçlar → {output_dir}/")
+
+    return {
+        'calibration': cal_results,
+        'rsd': rsd_results,
+        'recovery': rec_df,
+        'std_addition': std_add_results,
+        'summary': summary
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# ÖRNEK KULLANIM
+# ══════════════════════════════════════════════════════════════
+if __name__ == '__main__':
+
+    # ─── SEÇENEK A: Dict olarak veri gir ────────────────────
+    calibration_data = {
+        0.1:  [0.15, 0.16, 0.14],
+        0.5:  [0.72, 0.74, 0.71],
+        1.0:  [1.43, 1.46, 1.41],
+        5.0:  [7.21, 7.18, 7.25],
+        10.0: [14.4, 14.5, 14.3],
+        50.0: [71.8, 72.1, 71.5],
+       100.0: [143.5, 144.0, 143.0],
+    }
+
+    rsd_data = {
+        'Intra-day': {
+            'n=1': [14.4, 14.5, 14.3, 14.6, 14.4]  # aynı günde 5 ölçüm
+        },
+        'Inter-day': {
+            'Day 1': [14.4, 14.5],
+            'Day 2': [14.3, 14.6],
+            'Day 3': [14.5, 14.4],
+        }
+    }
+
+    recovery_data = {
+        'Matriksler':  ['Blood serum', 'Urine', 'Tap water'],
+        'spike_uM':    [10.0, 10.0, 10.0],
+        'ip_uA':       [
+            [14.3, 14.4, 14.5],   # serum
+            [14.6, 14.7, 14.5],   # urine
+            [14.4, 14.3, 14.5],   # su
+        ]
+    }
+
+    std_addition_data = {
+        'additions_uM': [0, 2, 4, 6, 8, 10],
+        'ip_uA':        [5.2, 8.0, 10.9, 13.8, 16.7, 19.6],
+    }
+
+    results = run_analytical_performance(
+        calibration_source=calibration_data,
+        analyte_name='Dopamine',
+        electrode_area_cm2=0.071,  # cm²
+        unit='μM',
+        rsd_data=rsd_data,
+        recovery_data=recovery_data,
+        std_addition_data=std_addition_data,
+        output_dir='results_analytical'
+    )

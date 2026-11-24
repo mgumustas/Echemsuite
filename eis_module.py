@@ -1,0 +1,437 @@
+"""
+=============================================================
+EIS MODÜLÜ — Elektrokimyasal Empedans Spektroskopisi
+=============================================================
+Ankara University / FS3P Lab
+
+İçerik:
+  - Nyquist ve Bode grafikleri
+  - Randles devresi fitting: Rs + Rct//CPE//Warburg
+  - Parametre tablosu (her modifikasyon adımı için)
+  - Rct karşılaştırma grafiği
+  - Yüzey kapasitansı ve pürüzlülük faktörü
+
+Giriş CSV formatı:
+  Sütunlar: Freq(Hz), Z_real(Ohm), Z_imag(Ohm)
+  NOT: Z_imag genellikle negatif (-Im) olarak verilir.
+       Pozitif olarak girilirse sign_zimag=-1 kullan.
+=============================================================
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy import optimize
+import os
+import warnings
+warnings.filterwarnings('ignore')
+
+plt.rcParams.update({
+    'font.family': 'sans-serif', 'font.size': 12,
+    'axes.linewidth': 1.2, 'axes.labelsize': 13,
+    'xtick.direction': 'in', 'ytick.direction': 'in',
+    'figure.dpi': 150, 'savefig.dpi': 300, 'savefig.bbox': 'tight',
+})
+
+COLORS = ['#1f4e79', '#c55a11', '#375623', '#7030a0', '#843c0c',
+          '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+
+WATERMARK_TEXT  = '© SilverstoneLab'
+WATERMARK_ALPHA = 0.18
+
+
+def _add_watermark(fig):
+    """Her şekle SilverstoneLab filigranı ekler."""
+    fig.text(0.98, 0.01, WATERMARK_TEXT,
+             fontsize=8, color='#1f4e79', alpha=WATERMARK_ALPHA,
+             ha='right', va='bottom', style='italic',
+             transform=fig.transFigure)
+
+
+# ══════════════════════════════════════════════════════════════
+# 1. VERİ YÜKLEME
+# ══════════════════════════════════════════════════════════════
+
+def load_eis_file(filepath, sign_zimag=-1):
+    """
+    EIS verisini yükler.
+
+    Parameters
+    ----------
+    filepath : str
+        CSV dosya yolu (Freq, Z_real, Z_imag sütunları)
+    sign_zimag : int
+        +1: Z_imag zaten pozitif (nadiren)
+        -1: Z_imag negatif olarak verilmiş (Nyquist için pozitife çevir)
+              Bu, potansiyostatların büyük çoğunluğu için doğrudur.
+
+    Returns
+    -------
+    DataFrame: freq, Zr (Ohm), Zi_pos (Ohm, pozitif olarak)
+    """
+    df = pd.read_csv(filepath, comment='#')
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    freq_col = next((c for c in df.columns if 'freq' in c or c == 'f'), None)
+    zr_col   = next((c for c in df.columns if 'real' in c or "z'" in c or "zr" in c), None)
+    zi_col   = next((c for c in df.columns if 'imag' in c or 'z"' in c or 'zi' in c), None)
+
+    if freq_col is None:
+        # İlk üç sütunu kullan
+        df.columns = ['freq', 'Zr', 'Zi'] + list(df.columns[3:])
+    else:
+        df = df.rename(columns={freq_col: 'freq', zr_col: 'Zr', zi_col: 'Zi'})
+
+    df = df[['freq', 'Zr', 'Zi']].dropna().astype(float)
+    df = df.sort_values('freq', ascending=False).reset_index(drop=True)
+
+    # Nyquist için −Im(Z) pozitif olmalı
+    df['Zi_pos'] = sign_zimag * df['Zi']  # işareti düzelt
+
+    return df
+
+# ══════════════════════════════════════════════════════════════
+# 2. EŞDEĞİŞ DEVRE: RANDLES (Rs + Rct//CPE//Warburg)
+# ══════════════════════════════════════════════════════════════
+
+def randles_cpe_impedance(omega, Rs, Rct, Q, n_cpe, sigma):
+    """
+    Randles devresi empedansı (CPE ile):
+
+    Z(ω) = Rs + [ Y_CPE + 1/(Rct + Z_W) ]^(-1)
+
+    Y_CPE  = Q × (jω)^n
+    Z_W    = σ/√ω × (1−j)   [sonsuz Warburg, ω→düşük frekanslarda geçerli]
+
+    Parameters
+    ----------
+    omega : array, rad/s cinsinden açısal frekans
+    Rs    : float, çözelti direnci (Ω)
+    Rct   : float, yük transferi direnci (Ω)
+    Q     : float, CPE katsayısı (S·s^n / cm²)
+    n_cpe : float, CPE üssü (0–1; 1→kondansatör, 0.5→Warburg)
+    sigma : float, Warburg katsayısı (Ω·s^(-1/2))
+    """
+    j = 1j
+    Z_W    = sigma / np.sqrt(omega) * (1 - j)
+    Y_CPE  = Q * (j * omega)**n_cpe
+    Z_p    = 1 / (Y_CPE + 1 / (Rct + Z_W))
+    return Rs + Z_p
+
+def _residuals_flat(params, omega, Zr_exp, Zi_exp):
+    """Fit için birleştirilmiş artıklar (gerçek + imajiner)."""
+    Rs, Rct, Q, n_cpe, sigma = params
+    Z_calc = randles_cpe_impedance(omega, Rs, Rct, Q, n_cpe, sigma)
+    res_r = Zr_exp - Z_calc.real
+    res_i = Zi_exp - Z_calc.imag
+    return np.concatenate([res_r, res_i])
+
+def fit_eis(df, label='Electrode', output_dir='.', p0=None):
+    """
+    Randles-CPE devresini EIS verisine uydurur.
+
+    Parameters
+    ----------
+    df      : DataFrame, load_eis_file() çıktısı
+    label   : str, grafik başlığı için
+    p0      : list [Rs0, Rct0, Q0, n0, sigma0] — başlangıç tahminleri
+              None ise otomatik tahmin edilir.
+
+    Returns
+    -------
+    dict: {Rs, Rct, Q, n_cpe, sigma, chi2, label}
+    """
+    omega = 2 * np.pi * df['freq'].values
+    Zr    = df['Zr'].values
+    Zi    = -df['Zi_pos'].values   # fitting için orijinal işaret
+
+    # Otomatik başlangıç tahmini
+    if p0 is None:
+        Rs0    = Zr[np.argmax(df['freq'])]   # yüksek frekansta Zr ≈ Rs
+        Rct0   = (Zr.max() - Zr.min()) * 1.2
+        Q0     = 1e-6
+        n0     = 0.9
+        sigma0 = 50.0
+        p0 = [Rs0, Rct0, Q0, n0, sigma0]
+
+    bounds = (
+        [0,    0,    1e-10, 0.5,  0],
+        [1e6,  1e8,  1e-2,  1.0,  1e6]
+    )
+
+    try:
+        result = optimize.least_squares(
+            _residuals_flat, p0,
+            args=(omega, Zr, Zi),
+            bounds=bounds, method='trf',
+            ftol=1e-10, xtol=1e-10, gtol=1e-10,
+            max_nfev=50000
+        )
+        Rs_f, Rct_f, Q_f, n_f, sigma_f = result.x
+
+        # χ²
+        Z_fit = randles_cpe_impedance(omega, Rs_f, Rct_f, Q_f, n_f, sigma_f)
+        residuals = np.concatenate([Zr - Z_fit.real, Zi - Z_fit.imag])
+        chi2 = np.sum(residuals**2) / (len(omega) * np.abs(Zr + 1j*Zi).mean()**2)
+
+        params = {
+            'label':  label,
+            'Rs':     Rs_f,
+            'Rct':    Rct_f,
+            'Q':      Q_f,
+            'n_cpe':  n_f,
+            'sigma':  sigma_f,
+            'chi2':   chi2,
+            'Z_fit':  Z_fit,
+            'omega':  omega,
+            'df':     df
+        }
+
+        # Yüzey kapasitansı (CPE → C_eff dönüşümü)
+        # C_eff = Q^(1/n) × Rct^((1-n)/n)
+        C_eff = Q_f**(1/n_f) * Rct_f**((1-n_f)/n_f)
+        params['C_eff_F'] = C_eff
+
+        return params
+
+    except Exception as e:
+        print(f"  Fit hatası ({label}): {e}")
+        return None
+
+# ══════════════════════════════════════════════════════════════
+# 3. NYQUIST VE BODE GRAFİKLERİ
+# ══════════════════════════════════════════════════════════════
+
+def plot_nyquist_comparison(fit_results, output_dir='.', filename='eis_nyquist.png'):
+    """
+    Birden fazla elektrot/adım için Nyquist karşılaştırması.
+
+    Parameters
+    ----------
+    fit_results : list of dict (fit_eis() çıktıları)
+    """
+    fig, ax = plt.subplots(figsize=(8, 7))
+
+    for i, res in enumerate(fit_results):
+        if res is None:
+            continue
+        df  = res['df']
+        color = COLORS[i % len(COLORS)]
+
+        # Deneysel
+        ax.scatter(df['Zr'], df['Zi_pos'],
+                   color=color, s=40, label=f"{res['label']} (exp)", zorder=4)
+        # Fit
+        Z_fit = res['Z_fit']
+        ax.plot(Z_fit.real, -Z_fit.imag,
+                color=color, linewidth=2, linestyle='--',
+                label=f"{res['label']} (fit)")
+
+    ax.set_xlabel("Z$_{real}$ (Ω)")
+    ax.set_ylabel("−Z$_{imag}$ (Ω)")
+    ax.set_title("Nyquist Plots — EIS")
+    ax.set_aspect('equal')
+    ax.legend(fontsize=9)
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, filename)
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Nyquist grafiği: {out_path}")
+
+def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
+    """
+    Bode grafikleri: |Z| vs frekans ve faz açısı vs frekans.
+    Her elektrota/adıma ait deneysel ve fit eğrileri.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    ax_mag, ax_phase = axes
+
+    for i, res in enumerate(fit_results):
+        if res is None:
+            continue
+        df    = res['df']
+        color = COLORS[i % len(COLORS)]
+        freq  = df['freq'].values
+        Zr    = df['Zr'].values
+        Zi    = -df['Zi_pos'].values   # original sign for phase
+
+        # Magnitude |Z|
+        Z_mag_exp   = np.sqrt(Zr**2 + Zi**2)
+        # Phase (degrees)
+        phase_exp   = np.degrees(np.arctan2(Zi, Zr))
+
+        ax_mag.scatter(freq, Z_mag_exp, color=color, s=20,
+                       label=f"{res['label']} (exp)", zorder=4)
+        ax_phase.scatter(freq, phase_exp, color=color, s=20,
+                         label=f"{res['label']} (exp)", zorder=4)
+
+        # Fit eğrisi
+        omega = res['omega']
+        Z_fit = res['Z_fit']
+        freq_fit = omega / (2 * np.pi)
+        Z_mag_fit  = np.abs(Z_fit)
+        phase_fit  = np.degrees(np.angle(Z_fit))
+
+        ax_mag.plot(freq_fit, Z_mag_fit, color=color, linewidth=2,
+                    linestyle='--', label=f"{res['label']} (fit)")
+        ax_phase.plot(freq_fit, phase_fit, color=color, linewidth=2,
+                      linestyle='--')
+
+    for ax in [ax_mag, ax_phase]:
+        ax.set_xscale('log')
+        ax.set_xlabel('Frequency (Hz)')
+
+    ax_mag.set_yscale('log')
+    ax_mag.set_ylabel('|Z| (Ω)')
+    ax_mag.set_title('Bode Plot — Impedance Magnitude')
+    ax_mag.legend(fontsize=8)
+
+    ax_phase.set_ylabel('Phase Angle (°)')
+    ax_phase.set_title('Bode Plot — Phase Angle')
+    ax_phase.legend(fontsize=8)
+
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, filename)
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Bode grafiği: {out_path}")
+
+
+def plot_rct_comparison(fit_results, output_dir='.'):
+    """Rct değerlerini modifikasyon adımlarına göre çubuk grafik."""
+    labels = [r['label'] for r in fit_results if r is not None]
+    rcts   = [r['Rct']   for r in fit_results if r is not None]
+
+    fig, ax = plt.subplots(figsize=(max(6, len(labels)*1.5), 5))
+    bars = ax.bar(labels, rcts, color=COLORS[:len(labels)],
+                  edgecolor='black', linewidth=0.8)
+
+    for bar, val in zip(bars, rcts):
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(rcts)*0.01,
+                f'{val:.1f} Ω', ha='center', va='bottom', fontsize=10)
+
+    ax.set_ylabel("R$_{ct}$ (Ω)")
+    ax.set_title("Charge Transfer Resistance — Modification Steps")
+    plt.xticks(rotation=15, ha='right')
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, 'eis_rct_comparison.png')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"  Rct karşılaştırma grafiği: {out_path}")
+
+# ══════════════════════════════════════════════════════════════
+# 4. KOMPLE EIS ANALİZİ
+# ══════════════════════════════════════════════════════════════
+
+def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1):
+    """
+    Birden fazla elektrot/adım için tam EIS analizi.
+
+    Parameters
+    ----------
+    file_dict : dict
+        {'Bare GCE': 'data/eis_bare.csv',
+         'GCE/rGO':  'data/eis_rgo.csv', ...}
+    output_dir : str
+    sign_zimag : int
+        -1: Z_imag negatif olarak verilmiş (çoğu potansiyostat)
+
+    Returns
+    -------
+    DataFrame: parametre tablosu
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"\n{'█'*55}")
+    print("  EIS ANALİZİ BAŞLADI")
+    print(f"{'█'*55}")
+
+    fit_results = []
+    for label, path in file_dict.items():
+        print(f"\n  ► {label} işleniyor...")
+        try:
+            df = load_eis_file(path, sign_zimag=sign_zimag)
+            print(f"    {len(df)} frekans noktası yüklendi")
+            res = fit_eis(df, label=label, output_dir=output_dir)
+            if res:
+                fit_results.append(res)
+                print(f"    Rs    = {res['Rs']:.2f} Ω")
+                print(f"    Rct   = {res['Rct']:.2f} Ω")
+                print(f"    Q     = {res['Q']:.4e} S·s^n")
+                print(f"    n     = {res['n_cpe']:.4f}")
+                print(f"    σ     = {res['sigma']:.4f} Ω·s^(-1/2)")
+                print(f"    C_eff = {res['C_eff_F']:.4e} F")
+                print(f"    χ²    = {res['chi2']:.4e}")
+        except Exception as e:
+            print(f"    HATA: {e}")
+
+    if not fit_results:
+        print("HATA: Hiç veri işlenemedi.")
+        return None
+
+    # Nyquist karşılaştırma grafiği
+    plot_nyquist_comparison(fit_results, output_dir=output_dir)
+
+    # Bode grafikleri (EIS yayınlarında standart)
+    plot_bode(fit_results, output_dir=output_dir)
+
+    # Rct karşılaştırma
+    plot_rct_comparison(fit_results, output_dir=output_dir)
+
+    # Parametre tablosu
+    rows = []
+    for r in fit_results:
+        rows.append({
+            'Electrode':   r['label'],
+            'Rs (Ω)':      f"{r['Rs']:.2f}",
+            'Rct (Ω)':     f"{r['Rct']:.2f}",
+            'Q (S·sⁿ)':    f"{r['Q']:.4e}",
+            'n (CPE)':     f"{r['n_cpe']:.4f}",
+            'σ (Ω·s⁻¹/²)': f"{r['sigma']:.4f}",
+            'C_eff (F)':   f"{r['C_eff_F']:.4e}",
+            'χ²':          f"{r['chi2']:.4e}",
+        })
+    table_df = pd.DataFrame(rows)
+
+    table_path = os.path.join(output_dir, 'eis_parameters.csv')
+    table_df.to_csv(table_path, index=False)
+
+    print(f"\n{'═'*55}")
+    print("EIS PARAMETRE TABLOSU")
+    print("═"*55)
+    print(table_df.to_string(index=False))
+    print(f"\nTablo kaydedildi: {table_path}")
+
+    # Pürüzlülük faktörü (RF)
+    if len(fit_results) >= 2:
+        c_bare = fit_results[0]['C_eff_F']
+        print(f"\n{'─'*55}")
+        print("PÜRÜZLÜLÜK FAKTÖRLERİ (bare elektrota göre)")
+        print(f"{'─'*55}")
+        for r in fit_results[1:]:
+            rf = r['C_eff_F'] / c_bare
+            print(f"  {r['label']}: RF = {rf:.3f}  "
+                  f"(C_eff = {r['C_eff_F']:.4e} F)")
+
+    return table_df, fit_results
+
+
+# ══════════════════════════════════════════════════════════════
+# ÖRNEK KULLANIM
+# ══════════════════════════════════════════════════════════════
+if __name__ == '__main__':
+    # Modifikasyon adımlarını sırayla ver
+    file_dict = {
+        'Bare GCE':     'data/eis_bare.csv',
+        'GCE/Material': 'data/eis_step1.csv',
+        'Modified GCE': 'data/eis_step2.csv',
+    }
+
+    results = run_eis_analysis(
+        file_dict=file_dict,
+        output_dir='results_eis',
+        sign_zimag=-1   # Z_imag negatif olarak verilmişse -1
+    )
