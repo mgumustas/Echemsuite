@@ -37,16 +37,24 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
     except ImportError:
         return "⚠️ 'anthropic' package not installed. Add it to requirements.txt."
 
-    # Fallback model chain if primary not available
+    import httpx
+
     _FALLBACK_MODELS = [
         model,
         "claude-opus-4-0",
         "claude-sonnet-4-5",
-        "claude-sonnet-4-0",
-        "claude-3-opus-20240229",
+        "claude-sonnet-4-6",
         "claude-3-5-sonnet-20241022",
+        "claude-3-opus-20240229",
     ]
-    client = anthropic.Anthropic(api_key=api_key)
+
+    # Use explicit httpx client with timeout to avoid Streamlit Cloud connection drops
+    http_client = httpx.Client(
+        timeout=httpx.Timeout(60.0, connect=15.0),
+        follow_redirects=True,
+    )
+    client = anthropic.Anthropic(api_key=api_key, http_client=http_client)
+
     last_err = None
     for _m in _FALLBACK_MODELS:
         try:
@@ -59,9 +67,14 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
             return msg.content[0].text.strip()
         except Exception as e:
             last_err = e
-            if "not_found" in str(e) or "404" in str(e):
+            err_str = str(e).lower()
+            if "not_found" in err_str or "404" in err_str:
                 continue   # try next model
-            raise          # other errors (auth, rate limit) → surface immediately
+            # For connection errors, return descriptive message instead of raising
+            if any(x in err_str for x in ["connection", "timeout", "network", "ssl", "connect"]):
+                return (f"⚠️ Connection error reaching Anthropic API: {e}\n\n"
+                        "Check: (1) API key is valid, (2) Streamlit Cloud network allows outbound HTTPS.")
+            raise
     return f"⚠️ No available model found. Last error: {last_err}"
 
 
