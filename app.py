@@ -388,7 +388,10 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                     proj["analyses"][module_key]["interpretation"] = text
                 st.session_state[f"interp_{module_key}"] = text
             except Exception as e:
+                import traceback
                 st.error(f"AI error: {e}")
+                with st.expander("🔍 Full error details"):
+                    st.code(traceback.format_exc())
 
     saved = (_cur().get("analyses", {}).get(module_key, {}).get("interpretation", "")
              or st.session_state.get(f"interp_{module_key}", ""))
