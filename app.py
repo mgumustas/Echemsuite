@@ -5,13 +5,64 @@ Features: multi-user auth · project folders · AI expert commentary · PDF + Wo
 """
 
 import streamlit as st
-import tempfile, os, sys, io, zipfile, re, json, datetime
+import tempfile, os, sys, io, zipfile, re, json, datetime, base64
 import yaml
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 from pathlib import Path
+
+# ── Persistent user-data directory ──────────────────────────
+_DATA_DIR = Path(__file__).parent / "user_data"
+_DATA_DIR.mkdir(exist_ok=True)
+
+def _user_data_path(username: str) -> Path:
+    return _DATA_DIR / f"{username}_projects.json"
+
+def _projects_to_json(projects: dict) -> str:
+    """Serialize projects to JSON — bytes → base64."""
+    def _walk(v):
+        if isinstance(v, bytes):
+            return {"_b64": base64.b64encode(v).decode()}
+        elif isinstance(v, dict):
+            return {k: _walk(vv) for k, vv in v.items()}
+        elif isinstance(v, list):
+            return [_walk(i) for i in v]
+        return v
+    return json.dumps(_walk(projects), ensure_ascii=False)
+
+def _projects_from_json(s: str) -> dict:
+    """Deserialize projects from JSON — base64 → bytes."""
+    def _walk(v):
+        if isinstance(v, dict):
+            if list(v.keys()) == ["_b64"]:
+                return base64.b64decode(v["_b64"])
+            return {k: _walk(vv) for k, vv in v.items()}
+        elif isinstance(v, list):
+            return [_walk(i) for i in v]
+        return v
+    return _walk(json.loads(s))
+
+def _load_user_data(username: str) -> dict | None:
+    """Load saved projects from disk. Returns None if no saved data."""
+    p = _user_data_path(username)
+    if not p.exists():
+        return None
+    try:
+        return _projects_from_json(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+def _persist_user_data(username: str, projects: dict, current_project: str):
+    """Save current projects to disk (called after every change)."""
+    try:
+        payload = {"projects": projects, "current_project": current_project}
+        _user_data_path(username).write_text(
+            _projects_to_json(payload), encoding="utf-8"
+        )
+    except Exception:
+        pass  # persistence is best-effort; session_state still works
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -127,9 +178,21 @@ def _init_state():
     pk = _user_key("projects")
     cp = _user_key("current_project")
     if pk not in st.session_state:
-        st.session_state[pk] = {}
+        # First load in this browser session — try to restore from disk
+        saved = _load_user_data(_current_user)
+        if saved:
+            st.session_state[pk] = saved.get("projects", {})
+            saved_cp = saved.get("current_project", "")
+            st.session_state[cp] = (saved_cp
+                if saved_cp in st.session_state[pk]
+                else next(iter(st.session_state[pk]), ""))
+        else:
+            st.session_state[pk] = {}
     if cp not in st.session_state or st.session_state[cp] not in st.session_state[pk]:
-        _new_project(f"{_current_name}'s First Study")
+        if st.session_state.get(pk):
+            st.session_state[cp] = list(st.session_state[pk].keys())[-1]
+        else:
+            _new_project(f"{_current_name}'s First Study")
     if "api_key" not in st.session_state:
         st.session_state.api_key = ""
 
@@ -141,6 +204,8 @@ def _new_project(name: str):
         "owner": _current_user,
     }
     st.session_state[_user_key("current_project")] = pid
+    _persist_user_data(_current_user, _projects(),
+                       st.session_state[_user_key("current_project")])
     return pid
 
 def _projects() -> dict:
@@ -167,6 +232,9 @@ def _save_analysis(key: str, metrics: dict,
         "interpretation": interpretation,
         "timestamp":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
+    # Auto-persist to disk after every analysis save
+    _persist_user_data(_current_user, _projects(),
+                       st.session_state.get(_user_key("current_project"), ""))
 
 _init_state()
 
@@ -198,6 +266,9 @@ with st.sidebar:
                                    st.session_state.get(cp_key,""))
                                if st.session_state.get(cp_key,"") in proj_names else 0,
                                key="proj_select")
+        if st.session_state.get(cp_key) != cur_pid:
+            st.session_state[cp_key] = cur_pid
+            _persist_user_data(_current_user, _projects(), cur_pid)
         st.session_state[cp_key] = cur_pid
 
     new_name = st.text_input("New project name", key="new_proj_name",
@@ -216,6 +287,8 @@ with st.sidebar:
             if cp:
                 cp["name"]  = new_proj_name or cp["name"]
                 cp["notes"] = new_notes
+                _persist_user_data(_current_user, _projects(),
+                                   st.session_state.get(_user_key("current_project"), ""))
                 st.success("Saved")
 
     # ── Password change ──────────────────────────────────────
