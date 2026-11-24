@@ -37,8 +37,6 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
     except ImportError:
         return "⚠️ 'anthropic' package not installed. Add it to requirements.txt."
 
-    import httpx
-
     _FALLBACK_MODELS = [
         model,
         "claude-opus-4-0",
@@ -48,12 +46,8 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
         "claude-3-opus-20240229",
     ]
 
-    # Use explicit httpx client with timeout to avoid Streamlit Cloud connection drops
-    http_client = httpx.Client(
-        timeout=httpx.Timeout(60.0, connect=15.0),
-        follow_redirects=True,
-    )
-    client = anthropic.Anthropic(api_key=api_key, http_client=http_client)
+    # Let the SDK manage its own http client (avoids httpx vs httpx2 version conflicts)
+    client = anthropic.Anthropic(api_key=api_key)
 
     last_err = None
     for _m in _FALLBACK_MODELS:
