@@ -1,0 +1,50 @@
+credentials:
+  usernames:
+    mehmet:
+      email: mgumustas@ankara.edu.tr
+      name: Mehmet
+      password: "$2b$12$bn9Uis5ch5R.GGR3YbAoeuBzxiuVwXbxa2QeshTf2vwzbOMLvVSHq"
+      role: admin
+    aysen:
+      email: ""
+      name: "Ayşen"
+      password: "$2b$12$ckyLTmbcWb4zqcdq0lPWfO.01TJU0D9Uosfk6RepZZ5Bdcsdyzjq6"
+      role: user
+    vildan:
+      email: ""
+      name: Vildan
+      password: "$2b$12$1SnpZzTi4ZzrQvUpZU6FgO4quyvAym5wzvlwscnNHL68m3j/eifa2"
+      role: user
+    deniz:
+      email: ""
+      name: Deniz
+      password: "$2b$12$dC9S8ekd7t6TMmCY.I45lu6J0eZRHwo0MtUqGdqRGmpMxWYTcJ9Be"
+      role: user
+    kenan:
+      email: ""
+      name: Kenan
+      password: "$2b$12$P08S0s.NLdzJ9LC4bZcW.eCeFrffjsRzvSSQ2uUOIHmlFJSrXUSFG"
+      role: user
+    ceren:
+      email: ""
+      name: Ceren
+      password: "$2b$12$9ty/4vAd44ihbqxRc5y/AeJaBUYf5ZkMQlKA/PoK3OXp2HmMsPxae"
+      role: user
+    kardelen:
+      email: ""
+      name: Kardelen
+      password: "$2b$12$W5G4aXZS/1IKX.l.RVA7MO7XDilJOvriOY/LnAEAVAU9r3wuJpdtO"
+      role: user
+    gulsem:
+      email: ""
+      name: "Gülsüm"
+      password: "$2b$12$sWZ4EILLsrW7.4PbaldkGODjvDaAnsMEIzGD3WRH9LPH36Nm6X93q"
+      role: user
+
+cookie:
+  expiry_days: 30
+  key: "11032a9d175d0df0191df7684db977427f39af6eb9f97dc86868cf7fd9f686e5"
+  name: silverstone_echem_auth
+
+preauthorized:
+  emails: []
