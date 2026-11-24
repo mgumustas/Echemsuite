@@ -695,7 +695,16 @@ elif page == "🔵  EIS — Impedance":
                     st.markdown('<div class="sec">Fit parameters</div>',
                                 unsafe_allow_html=True)
                     st.dataframe(param_df,use_container_width=True,hide_index=True)
-                _save_analysis("eis",{},out,param_df=param_df)
+                # Extract key EIS metrics into the metrics dict so AI can use them
+                _eis_metrics = {}
+                if param_df is not None and not param_df.empty:
+                    for col in param_df.columns:
+                        try:
+                            _eis_metrics[col] = param_df[col].tolist()
+                        except Exception:
+                            pass
+                    _eis_metrics["electrodes"] = list(file_dict.keys())
+                _save_analysis("eis", _eis_metrics, out, param_df=param_df)
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"eis_analysis.zip")
                 _ai_interpret_btn("eis",interpret_eis,
