@@ -35,7 +35,7 @@ credentials:
       name: Kardelen
       password: "$2b$12$W5G4aXZS/1IKX.l.RVA7MO7XDilJOvriOY/LnAEAVAU9r3wuJpdtO"
       role: user
-    gulsem:
+    gulsum:
       email: ""
       name: "Gülsüm"
       password: "$2b$12$sWZ4EILLsrW7.4PbaldkGODjvDaAnsMEIzGD3WRH9LPH36Nm6X93q"
