@@ -87,12 +87,14 @@ st.set_page_config(
 )
 
 st.markdown("""
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* ── Google Font (Inter) via @import — link tags engelleniyor Streamlit sandbox'ta */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 /* ── Global font ───────────────────────────────────────── */
-html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+html, body, [class*="css"],
+.stApp, .stMarkdown, .stText, button, input, select, textarea,
+[data-testid] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
 
 /* ── Sidebar ────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
