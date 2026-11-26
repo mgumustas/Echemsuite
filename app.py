@@ -87,26 +87,118 @@ st.set_page_config(
 )
 
 st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* ── Global font ───────────────────────────────────────── */
+html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+
+/* ── Sidebar ────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg,#0d1b2a 0%,#1b2838 60%,#0d1b2a 100%);
+    background: linear-gradient(180deg, #0a1628 0%, #132040 45%, #0e1a30 100%);
+    border-right: 1px solid rgba(100,160,220,0.08);
 }
-[data-testid="stSidebar"] p,[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] label,[data-testid="stSidebar"] .stMarkdown
-    { color:#c8d8e8 !important; }
-[data-testid="stSidebar"] h2 { color:#7ec8e3 !important; }
-[data-testid="stSidebar"] h3 { color:#a8c8e0 !important; }
-.block-container { padding-top:1.4rem; }
-.sec { font-size:1rem;font-weight:600;color:#1f4e79;
-       border-bottom:2px solid #1f4e79;padding-bottom:3px;margin-top:1rem; }
-.wm  { position:fixed;bottom:10px;right:14px;font-size:11px;
-       color:#1f4e79;opacity:.28;font-style:italic; }
-.interp-box { background:#f8f9ff;border-left:4px solid #2e75b6;
-              padding:14px 18px;border-radius:0 8px 8px 0;
-              font-style:italic;line-height:1.6; }
-.login-box { max-width:400px;margin:4rem auto;padding:2rem;
-             border:1px solid #dde;border-radius:12px;
-             background:#f8faff;text-align:center; }
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stMarkdown { color: #c2d4e8 !important; }
+[data-testid="stSidebar"] h2 { color: #7ec8e3 !important; font-weight: 600; letter-spacing: 0.01em; }
+[data-testid="stSidebar"] h3 { color: #90b8d8 !important; font-weight: 500; }
+
+/* Sidebar radio / selectbox hover */
+[data-testid="stSidebar"] .stRadio label:hover span,
+[data-testid="stSidebar"] .stSelectbox label:hover { color: #aee4f7 !important; }
+
+/* ── Main layout ─────────────────────────────────────────── */
+.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+
+/* ── Section header ──────────────────────────────────────── */
+.sec {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1a3a5c;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 2px solid;
+    border-image: linear-gradient(90deg, #1a3a5c 0%, #2b7cb8 60%, transparent 100%) 1;
+    padding-bottom: 5px;
+    margin-top: 1.4rem;
+    margin-bottom: 0.6rem;
+}
+
+/* ── Metric / result cards ───────────────────────────────── */
+.metric-card {
+    background: linear-gradient(135deg, #f4f8ff 0%, #eaf1fb 100%);
+    border: 1px solid #c8daf0;
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    transition: box-shadow 0.2s;
+}
+.metric-card:hover { box-shadow: 0 4px 16px rgba(27,74,145,0.12); }
+.metric-card .label { font-size: 0.75rem; color: #5a7a9a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.metric-card .value { font-size: 1.35rem; color: #1a3a5c; font-weight: 700; margin-top: 2px; }
+.metric-card .unit  { font-size: 0.8rem;  color: #7a9ab8; margin-left: 3px; }
+
+/* ── AI interpretation box ───────────────────────────────── */
+.interp-box {
+    background: linear-gradient(135deg, #f5f8ff 0%, #eef3fc 100%);
+    border-left: 4px solid #2b7cb8;
+    padding: 16px 20px;
+    border-radius: 0 10px 10px 0;
+    font-style: italic;
+    line-height: 1.7;
+    color: #2a3f5a;
+    box-shadow: 2px 2px 10px rgba(43,124,184,0.07);
+}
+
+/* ── Login box ───────────────────────────────────────────── */
+.login-box {
+    max-width: 420px;
+    margin: 4rem auto;
+    padding: 2.4rem 2.8rem;
+    border: 1px solid #c8daf0;
+    border-radius: 16px;
+    background: linear-gradient(160deg, #f8faff 0%, #f0f5fc 100%);
+    text-align: center;
+    box-shadow: 0 8px 32px rgba(26,58,92,0.10);
+}
+
+/* ── Status badge ────────────────────────────────────────── */
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+.badge-ok   { background: #d4edda; color: #1a6630; }
+.badge-warn { background: #fff3cd; color: #856404; }
+.badge-err  { background: #f8d7da; color: #721c24; }
+
+/* ── Watermark ───────────────────────────────────────────── */
+.wm {
+    position: fixed;
+    bottom: 12px;
+    right: 16px;
+    font-size: 10.5px;
+    color: #1a3a5c;
+    opacity: 0.22;
+    font-style: italic;
+    letter-spacing: 0.03em;
+    pointer-events: none;
+}
+
+/* ── Streamlit button polish ─────────────────────────────── */
+.stButton > button {
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.02em !important;
+    transition: opacity 0.15s !important;
+}
+.stButton > button:hover { opacity: 0.88 !important; }
 </style>
 <div class="wm">© SilverstoneLab</div>
 """, unsafe_allow_html=True)
