@@ -1392,6 +1392,156 @@ elif page == "📊  Calibration & LOD/LOQ":
                         st.error(f"ICH Q2 hesaplama hatası: {e}")
                         import traceback; st.code(traceback.format_exc())
 
+    # ── QC Noktaları + Accuracy ──────────────────────────────
+    st.divider()
+    with st.expander("🎯 QC Noktaları & Accuracy / Geri Kazanım (İsteğe Bağlı)", expanded=False):
+
+        # ── QC Önerisi ──────────────────────────────────────────
+        st.markdown("### 💡 QC Noktası Önerisi")
+        st.caption("Girdiğin kalibrasyon verisi üzerinden otomatik hesaplanır. "
+                   "Önce kalibrasyon verisini gir, sonra butona bas.")
+
+        if st.button("🔢 QC Noktalarını Hesapla (LLOQ · LQC · MQC · HQC)",
+                     key="btn_qc_suggest", type="secondary"):
+            if not cal_data:
+                st.warning("Önce kalibrasyon verisini gir.")
+            else:
+                from scipy import stats as _stats
+                _concs = sorted(cal_data.keys())
+                _ips   = [float(np.mean(cal_data[c])) for c in _concs]
+                _c_arr = np.array(_concs, dtype=float)
+                _i_arr = np.array(_ips,   dtype=float)
+                _slope, _intercept, _r, _, _se = _stats.linregress(_c_arr, _i_arr)
+                _ip_pred   = _slope * _c_arr + _intercept
+                _residuals = _i_arr - _ip_pred
+                _syx = float(np.sqrt(np.sum(_residuals**2) / max(len(_c_arr)-2, 1)))
+                _loq = 10 * _syx / _slope if _slope > 0 else _concs[0]
+                _lod = 3  * _syx / _slope if _slope > 0 else _concs[0]
+                _cmin, _cmax = float(_c_arr.min()), float(_c_arr.max())
+
+                # ICH / FDA QC seviyeleri
+                lloq = max(_loq, _cmin)
+                lqc  = lloq * 3.0
+                hqc  = _cmax * 0.80
+                mqc  = (lloq * lqc * hqc) ** (1/3)   # geometrik orta
+
+                # Kalibrasyon doğrusundan beklenen ip değerleri
+                def _ip(c): return round(_slope * c + _intercept, 4)
+
+                qc_df = pd.DataFrame([
+                    {"QC Seviyesi": "LLOQ", "Nominal C": f"{lloq:.4g} {conc_unit}",
+                     "Beklenen ip (µA)": _ip(lloq), "Açıklama": "Alt tayin sınırı (LOQ)"},
+                    {"QC Seviyesi": "LQC",  "Nominal C": f"{lqc:.4g} {conc_unit}",
+                     "Beklenen ip (µA)": _ip(lqc),  "Açıklama": "Düşük QC ≈ 3× LLOQ"},
+                    {"QC Seviyesi": "MQC",  "Nominal C": f"{mqc:.4g} {conc_unit}",
+                     "Beklenen ip (µA)": _ip(mqc),  "Açıklama": "Orta QC (geometrik orta)"},
+                    {"QC Seviyesi": "HQC",  "Nominal C": f"{hqc:.4g} {conc_unit}",
+                     "Beklenen ip (µA)": _ip(hqc),  "Açıklama": "Yüksek QC ≈ %80 üst sınır"},
+                ])
+                st.dataframe(qc_df, use_container_width=True, hide_index=True)
+                st.caption(f"Kalibrasyon: slope={_slope:.4f} µA/{conc_unit} | "
+                           f"LOD={_lod:.4g} | LOQ={_loq:.4g} {conc_unit} | "
+                           f"r={_r:.5f} | Aralık: {_cmin:.4g}–{_cmax:.4g} {conc_unit}")
+                # Session state'e kaydet — Accuracy tablosunda kullanmak için
+                st.session_state["qc_points"] = {
+                    "slope": _slope, "intercept": _intercept,
+                    "lloq": lloq, "lqc": lqc, "mqc": mqc, "hqc": hqc,
+                    "unit": conc_unit
+                }
+
+        st.divider()
+
+        # ── Accuracy / Geri Kazanım Tablosu ─────────────────────
+        st.markdown("### 📐 Accuracy (Geri Kazanım)")
+        st.caption("Her satır = bir QC seviyesi. Her sütun = bir tekrar ölçümü (ip, µA). "
+                   "Nominal konsantrasyon ile ölçülen ip'den geri kazanım hesaplanır.")
+
+        # QC noktaları öneriden geldiyse tablo etiketlerini doldur
+        _qc = st.session_state.get("qc_points", {})
+        _lloq_v = round(_qc.get("lloq", 0), 4) if _qc else 0
+        _lqc_v  = round(_qc.get("lqc",  0), 4) if _qc else 0
+        _mqc_v  = round(_qc.get("mqc",  0), 4) if _qc else 0
+        _hqc_v  = round(_qc.get("hqc",  0), 4) if _qc else 0
+
+        default_acc = pd.DataFrame({
+            'QC Seviyesi':    ['LLOQ', 'LQC', 'MQC', 'HQC'],
+            f'Nominal C ({conc_unit})': [_lloq_v or None, _lqc_v or None,
+                                          _mqc_v or None, _hqc_v or None],
+            'ip_1 (µA)': [None]*4, 'ip_2 (µA)': [None]*4,
+            'ip_3 (µA)': [None]*4, 'ip_4 (µA)': [None]*4,
+            'ip_5 (µA)': [None]*4, 'ip_6 (µA)': [None]*4,
+        })
+        acc_tbl = st.data_editor(default_acc, num_rows="dynamic",
+                                  use_container_width=True, key="acc_tbl")
+
+        if st.button("▶ Accuracy Hesapla", key="btn_acc", type="secondary"):
+            _qc_now = st.session_state.get("qc_points", {})
+            if not _qc_now and not cal_data:
+                st.warning("Önce 'QC Noktalarını Hesapla' butonuna bas veya kalibrasyon verisini gir.")
+            else:
+                # Slope/intercept al — session'dan veya cal_data'dan hesapla
+                if _qc_now:
+                    _sl, _ic = _qc_now["slope"], _qc_now["intercept"]
+                else:
+                    from scipy import stats as _stats2
+                    _c2 = np.array(sorted(cal_data.keys()), float)
+                    _i2 = np.array([float(np.mean(cal_data[c])) for c in sorted(cal_data)], float)
+                    _sl, _ic, *_ = _stats2.linregress(_c2, _i2)
+
+                nom_col  = acc_tbl.columns[1]
+                ip_cols  = [c for c in acc_tbl.columns if c.startswith('ip_')]
+                acc_rows = []
+                for _, row in acc_tbl.iterrows():
+                    lbl = str(row['QC Seviyesi']).strip() if pd.notna(row['QC Seviyesi']) else ''
+                    if not lbl or lbl == 'None':
+                        continue
+                    try:
+                        nom_c = float(row[nom_col])
+                    except (ValueError, TypeError):
+                        st.warning(f"'{lbl}' satırında Nominal C eksik, atlandı.")
+                        continue
+                    vals = []
+                    for c in ip_cols:
+                        try:
+                            if pd.notna(row[c]):
+                                vals.append(float(row[c]))
+                        except (ValueError, TypeError):
+                            pass
+                    if not vals:
+                        continue
+                    ip_mean  = float(np.mean(vals))
+                    ip_std   = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
+                    ip_rsd   = (ip_std / ip_mean * 100) if ip_mean != 0 else 0.0
+                    calc_c   = (ip_mean - _ic) / _sl if _sl != 0 else float('nan')
+                    rec_pct  = (calc_c / nom_c * 100) if nom_c != 0 else float('nan')
+                    acc_rows.append({
+                        'QC Seviyesi': lbl,
+                        f'Nominal C ({conc_unit})': nom_c,
+                        'n': len(vals),
+                        'ip ort. (µA)': round(ip_mean, 4),
+                        'ip SD (µA)': round(ip_std, 4),
+                        'ip %RSD': round(ip_rsd, 2),
+                        f'Hesaplanan C ({conc_unit})': round(calc_c, 4),
+                        'Geri Kazanım (%)': round(rec_pct, 2),
+                        'ICH Kabul (98–102%)': "✅" if 98 <= rec_pct <= 102 else "⚠️"
+                    })
+
+                if acc_rows:
+                    acc_res_df = pd.DataFrame(acc_rows)
+                    st.dataframe(acc_res_df, use_container_width=True, hide_index=True)
+                    all_pass = all(98 <= r['Geri Kazanım (%)'] <= 102 for r in acc_rows
+                                   if not np.isnan(r['Geri Kazanım (%)']))
+                    if all_pass:
+                        st.success("✅ Tüm QC seviyeleri ICH Q2(R2) accuracy kriterini karşılıyor (98–102%)")
+                    else:
+                        st.warning("⚠️ Bazı QC seviyeleri 98–102% aralığının dışında.")
+                    # Kaydet
+                    _save_analysis("cal_accuracy",
+                                   {r['QC Seviyesi']: r['Geri Kazanım (%)'] for r in acc_rows},
+                                   None)
+                else:
+                    st.warning("Tabloya en az 1 satır dolu veri gir.")
+
     if cal_data and st.button("▶ Run Calibration Analysis",type="primary",use_container_width=True):
         with st.spinner("Computing…"):
             tmpdir=tempfile.mkdtemp()
