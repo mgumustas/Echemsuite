@@ -156,6 +156,23 @@ if _AUTH_AVAILABLE:
         <p style='color:#555'>Electrochemical Analysis Suite</p>
         <p style='color:#888;font-size:0.9rem'>Enter your credentials above to continue.</p>
         </div>""", unsafe_allow_html=True)
+        _ka = st.checkbox(
+            "🔁 Oturumu açık tut (her 4 dk yenile)",
+            value=st.session_state.get("keep_alive", False),
+            key="keep_alive_cb",
+            help="Giriş yaptıktan sonra da aktif kalır. Sayfa sessizce yenilenir, veri kaybı olmaz."
+        )
+        st.session_state["keep_alive"] = _ka
+        if _ka:
+            st.components.v1.html(
+                """<script>
+                if (!window._silKA) {
+                    window._silKA = true;
+                    setTimeout(function() { window.location.reload(); }, 240000);
+                }
+                </script>""",
+                height=0,
+            )
         st.stop()
     # ── logged in ───────────────────────────────────────────
     _current_user     = _auth_username or "guest"
@@ -253,6 +270,24 @@ with st.sidebar:
     st.markdown(f"**{role_badge} {_current_name}**")
     if _AUTH_AVAILABLE:
         _authenticator.logout("🚪 Log out", location="sidebar")
+    _keep_alive = st.checkbox(
+        "🔁 Oturumu açık tut",
+        value=st.session_state.get("keep_alive", False),
+        key="keep_alive_cb",
+        help="İşaretli iken sayfa her 4 dakikada bir sessizce yenilenir; "
+             "oturum kapanmaz, veriler kaydedildiğinden kayıp olmaz."
+    )
+    st.session_state["keep_alive"] = _keep_alive
+    if _keep_alive:
+        st.components.v1.html(
+            """<script>
+            if (!window._silKA) {
+                window._silKA = true;
+                setTimeout(function() { window.location.reload(); }, 240000);
+            }
+            </script>""",
+            height=0,
+        )
     st.divider()
 
     # ── Project management ───────────────────────────────────
@@ -494,27 +529,6 @@ with st.sidebar:
 **Std addition:** `Addition`(µM), `ip`(µA)
         """)
 
-    st.divider()
-    # ── Oturumu canlı tut ────────────────────────────────────
-    _keep_alive = st.checkbox(
-        "🔁 Oturumu açık tut (her 4 dk yenile)",
-        value=st.session_state.get("keep_alive", False),
-        key="keep_alive_cb",
-        help="Uzun süre analiz yapmadan bekliyorsanız oturumun kapanmaması için işaretleyin. "
-             "Sayfa sessizce yenilenir; veriler kaydedildiğinden kayıp olmaz."
-    )
-    st.session_state["keep_alive"] = _keep_alive
-    if _keep_alive:
-        st.components.v1.html(
-            """<script>
-            if (!window._silKA) {
-                window._silKA = true;
-                setTimeout(function() { window.location.reload(); }, 240000);
-            }
-            </script>""",
-            height=0,
-        )
-        st.caption("⏱ Sayfa 4 dk'da bir yenileniyor.")
 
 
 # ═══════════════════════════════════════════════════════════
