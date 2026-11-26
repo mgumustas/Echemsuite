@@ -2432,7 +2432,6 @@ elif page == "🧬  Selectivity":
                 })
             st.session_state["sel_results"] = _sel_results
             st.session_state["sel_ref"]     = _sel_ref
-            st.session_state["sel_thresh"]  = _sel_thresh
 
     if "sel_results" in st.session_state:
         _sr = st.session_state["sel_results"]
@@ -2544,9 +2543,7 @@ elif page == "📅  Stability":
                     "% Recovery":   round(_rec, 2),
                     "Status":       "✅" if _rec >= _stab_thresh else "⚠️",
                 })
-            st.session_state["stab_results"]  = _stab_res
-            st.session_state["stab_thresh"]   = _stab_thresh
-            st.session_state["stab_analyte"]  = _stab_analyte
+            st.session_state["stab_results"] = _stab_res
 
     if "stab_results" in st.session_state:
         _sr2 = st.session_state["stab_results"]
