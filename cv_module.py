@@ -366,7 +366,7 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'cv_randles_sevcik.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"\n  Grafik kaydedildi: {out_path}")
 
@@ -425,7 +425,9 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.', plot_style=Non
     if slope < 0.6:
         mechanism = "Difüzyon Kontrollü (b ≈ 0.5)"
         color = _colors[0]
-    elif slope > 0.85:
+    elif slope > 0.90:
+        # Eşik 0.85→0.90: literatür konsensüsü (ACS Sensors, Anal. Chem.)
+        # 0.85–0.90 arası "karışık kontrol" olarak raporlanmalı
         mechanism = "Adsorpsiyon Kontrollü (b ≈ 1.0)"
         color = _colors[1 % len(_colors)]
     else:
@@ -480,7 +482,7 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.', plot_style=Non
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'cv_mechanism_analysis.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"  Grafik kaydedildi: {out_path}")
 
