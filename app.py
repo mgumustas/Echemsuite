@@ -1110,6 +1110,154 @@ elif page == "📊  Calibration & LOD/LOQ":
     st.title("📊 Calibration Curve, LOD & LOQ")
     st.caption(f"Project: **{_cur().get('name','')}**")
 
+    # ── Toplu Validasyon Şablonu İndir & Yükle ─────────────────────────────
+    with st.expander("📦 Toplu Validasyon Şablonu (.xlsx) — tek dosyada tüm bölümler",
+                     expanded=False):
+        col_dl, col_up2 = st.columns([1, 1])
+        with col_dl:
+            st.markdown("**1 · Şablonu İndir**")
+            _tpl_path = os.path.join(os.path.dirname(__file__),
+                                     "SilverstoneLab_Validation_Template.xlsx")
+            if os.path.exists(_tpl_path):
+                with open(_tpl_path, "rb") as _f:
+                    st.download_button(
+                        "⬇️ Şablonu İndir (.xlsx)",
+                        data=_f.read(),
+                        file_name="SilverstoneLab_Validation_Template.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument"
+                              ".spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                st.caption("README sekmesini okuyun · Yeşil satırlar örnek, sarı satırlara kendi verilerinizi girin · Sekme isimlerini değiştirmeyin.")
+            else:
+                st.warning("Şablon dosyası bulunamadı. Yönetici ile iletişime geçin.")
+
+        with col_up2:
+            st.markdown("**2 · Doldurulmuş Şablonu Yükle**")
+            bulk_up = st.file_uploader("Doldurulmuş şablonu yükle (.xlsx)",
+                                       type=["xlsx"], key="bulk_xlsx_up")
+            if bulk_up:
+                try:
+                    import openpyxl as _opxl
+                    _wb = _opxl.load_workbook(bulk_up, data_only=True)
+                    _sheets = [s.title for s in _wb.worksheets]
+                    st.success(f"✓ Yüklendi — sekmeler: {', '.join(_sheets)}")
+
+                    def _xl_sheet_to_df(wb, name):
+                        """Return a sheet as a list-of-lists (row 0 = headers)."""
+                        if name not in [s.title for s in wb.worksheets]:
+                            return None
+                        ws = wb[name]
+                        rows = list(ws.iter_rows(values_only=True))
+                        return rows  # rows[0] = header
+
+                    # ── Calibration ─────────────────────────────────────────
+                    _cal_rows = _xl_sheet_to_df(_wb, "Calibration")
+                    if _cal_rows and len(_cal_rows) > 1:
+                        _cal_hdr = _cal_rows[0]
+                        _bulk_cal = {}
+                        for _row in _cal_rows[1:]:
+                            if _row[0] is None:
+                                continue
+                            try:
+                                _conc = float(_row[0])
+                            except (TypeError, ValueError):
+                                continue
+                            _vals = []
+                            for _v in _row[1:]:
+                                try:
+                                    if _v is not None:
+                                        _vals.append(float(_v))
+                                except (TypeError, ValueError):
+                                    pass
+                            if _vals:
+                                _bulk_cal[_conc] = _vals
+                        if _bulk_cal:
+                            st.session_state["bulk_cal"] = _bulk_cal
+                            st.caption(f"  Kalibrasyon: {len(_bulk_cal)} konsantrasyon seviyesi aktarıldı.")
+
+                    # ── Repeatability ────────────────────────────────────────
+                    _rep_rows = _xl_sheet_to_df(_wb, "Repeatability")
+                    if _rep_rows and len(_rep_rows) > 1:
+                        _bulk_rep = {}
+                        for _row in _rep_rows[1:]:
+                            if _row[0] is None:
+                                continue
+                            _lbl = str(_row[0]).strip()
+                            try:
+                                _ip = float(_row[2]) if len(_row) > 2 else float(_row[1])
+                            except (TypeError, ValueError):
+                                continue
+                            _bulk_rep.setdefault(_lbl, []).append(_ip)
+                        if _bulk_rep:
+                            st.session_state["bulk_rep"] = _bulk_rep
+                            st.caption(f"  Tekrarlılık: {len(_bulk_rep)} seviye aktarıldı.")
+
+                    # ── Inter_Precision ──────────────────────────────────────
+                    _ipr_rows = _xl_sheet_to_df(_wb, "Inter_Precision")
+                    if _ipr_rows and len(_ipr_rows) > 1:
+                        _bulk_ipr = {}  # {gun: {seviye: [ip_vals]}}
+                        for _row in _ipr_rows[1:]:
+                            if _row[0] is None:
+                                continue
+                            _gun = str(_row[0]).strip()
+                            _sev = str(_row[1]).strip() if len(_row) > 1 else "?"
+                            try:
+                                _ip  = float(_row[3]) if len(_row) > 3 else float(_row[2])
+                            except (TypeError, ValueError):
+                                continue
+                            _bulk_ipr.setdefault(_gun, {}).setdefault(_sev, []).append(_ip)
+                        if _bulk_ipr:
+                            st.session_state["bulk_ipr"] = _bulk_ipr
+                            st.caption(f"  Orta Kesinlik: {len(_bulk_ipr)} gün aktarıldı.")
+
+                    # ── Accuracy ─────────────────────────────────────────────
+                    _acc_rows = _xl_sheet_to_df(_wb, "Accuracy")
+                    if _acc_rows and len(_acc_rows) > 1:
+                        _bulk_acc = {}  # {qc_lbl: (nominal_c, [ip_vals])}
+                        for _row in _acc_rows[1:]:
+                            if _row[0] is None:
+                                continue
+                            _lbl = str(_row[0]).strip()
+                            try:
+                                _nom = float(_row[1])
+                                _ip  = float(_row[3]) if len(_row) > 3 else float(_row[2])
+                            except (TypeError, ValueError):
+                                continue
+                            if _lbl not in _bulk_acc:
+                                _bulk_acc[_lbl] = (_nom, [])
+                            _bulk_acc[_lbl][1].append(_ip)
+                        if _bulk_acc:
+                            st.session_state["bulk_acc"] = _bulk_acc
+                            st.caption(f"  Accuracy: {len(_bulk_acc)} QC seviyesi aktarıldı.")
+
+                    # ── Std_Addition ─────────────────────────────────────────
+                    _sa_rows = _xl_sheet_to_df(_wb, "Std_Addition")
+                    if _sa_rows and len(_sa_rows) > 1:
+                        _bulk_sa = []
+                        for _row in _sa_rows[1:]:
+                            try:
+                                if _row[0] is not None and _row[1] is not None:
+                                    _bulk_sa.append((float(_row[0]), float(_row[1])))
+                            except (TypeError, ValueError):
+                                pass
+                        if _bulk_sa:
+                            st.session_state["bulk_sa"] = _bulk_sa
+                            st.caption(f"  Standart Ekleme: {len(_bulk_sa)} nokta aktarıldı.")
+
+                    # Kalibrasyon verisini bulk'tan al
+                    if "bulk_cal" in st.session_state:
+                        st.info("✅ Şablon verisi yüklendi. Aşağıdan analizi başlatın."
+                                " ICH Q2 bölümlerine geçtiğinizde veriler otomatik uygulanır.")
+
+                except Exception as _e:
+                    st.error(f"Şablon okunamadı: {_e}")
+
+    # Kalibrasyon verisi: bulk yükleme öncelikli
+    if "bulk_cal" in st.session_state and st.session_state["bulk_cal"]:
+        st.info("📦 Bulk şablon'dan kalibrasyon verisi kullanılıyor. "
+                "Manuel giriş yapmak isterseniz aşağıya veri ekleyebilirsiniz.")
+
     left,right = st.columns([1,1])
     with left:
         st.markdown('<div class="sec">Parameters</div>',unsafe_allow_html=True)
@@ -1159,6 +1307,12 @@ elif page == "📊  Calibration & LOD/LOQ":
         for _,row in cal_tbl.dropna(subset=[cc,'ip_1 (µA)']).iterrows():
             vals=[float(row[c]) for c in cal_tbl.columns[1:] if pd.notna(row[c])]
             if vals: cal_data[float(row[cc])]=vals
+
+    # Bulk şablondan kalibrasyon verisi varsa mevcut cal_data'ya ekle
+    if "bulk_cal" in st.session_state:
+        for _bc, _bv in st.session_state["bulk_cal"].items():
+            if _bc not in cal_data:
+                cal_data[_bc] = _bv
 
     # ── Kalibrasyon Renk Seçiciler ────────────────────────────
     _cal_base = st.session_state.get("plot_style",{}).get(
@@ -1306,6 +1460,18 @@ elif page == "📊  Calibration & LOD/LOQ":
                             pass
                     if len(vals) >= 2:
                         inter_rows.append((lbl, vals))
+
+        # Bulk şablondan gelen kesinlik verilerini otomatik ekle (henüz manuel giriş yoksa)
+        if not intra_rows and "bulk_rep" in st.session_state:
+            intra_rows = [(lbl, vals) for lbl, vals in st.session_state["bulk_rep"].items()]
+            st.info(f"📦 Bulk şablondan tekrarlılık verisi yüklendi: {[r[0] for r in intra_rows]}")
+        if not inter_rows and "bulk_ipr" in st.session_state:
+            # {gun: {seviye: [vals]}} → flatten to [(gun_sev_lbl, vals)]
+            for _gun, _sevs in st.session_state["bulk_ipr"].items():
+                for _sev, _vals in _sevs.items():
+                    inter_rows.append((f"{_gun} – {_sev}", _vals))
+            if inter_rows:
+                st.info(f"📦 Bulk şablondan orta kesinlik verisi yüklendi: {len(inter_rows)} grup")
 
         if st.button("▶ ICH Q2(R2) Validasyon Hesapla", type="secondary", use_container_width=True,
                      key="btn_ich_q2"):
@@ -1456,6 +1622,9 @@ elif page == "📊  Calibration & LOD/LOQ":
         st.caption("Her satır = bir QC seviyesi. Her sütun = bir tekrar ölçümü (ip, µA). "
                    "Nominal konsantrasyon ile ölçülen ip'den geri kazanım hesaplanır.")
 
+        acc_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
+                             horizontal=True, key="acc_mode")
+
         # QC noktaları öneriden geldiyse tablo etiketlerini doldur
         _qc = st.session_state.get("qc_points", {})
         _lloq_v = round(_qc.get("lloq", 0), 4) if _qc else 0
@@ -1463,16 +1632,109 @@ elif page == "📊  Calibration & LOD/LOQ":
         _mqc_v  = round(_qc.get("mqc",  0), 4) if _qc else 0
         _hqc_v  = round(_qc.get("hqc",  0), 4) if _qc else 0
 
-        default_acc = pd.DataFrame({
-            'QC Seviyesi':    ['LLOQ', 'LQC', 'MQC', 'HQC'],
-            f'Nominal C ({conc_unit})': [_lloq_v or None, _lqc_v or None,
-                                          _mqc_v or None, _hqc_v or None],
-            'ip_1 (µA)': [None]*4, 'ip_2 (µA)': [None]*4,
-            'ip_3 (µA)': [None]*4, 'ip_4 (µA)': [None]*4,
-            'ip_5 (µA)': [None]*4, 'ip_6 (µA)': [None]*4,
-        })
-        acc_tbl = st.data_editor(default_acc, num_rows="dynamic",
-                                  use_container_width=True, key="acc_tbl")
+        # acc_tbl_data: list of (qc_label, nominal_c, [ip values])
+        acc_tbl_data = []
+
+        # Bulk şablondan gelen accuracy verisi varsa önceden doldur
+        if "bulk_acc" in st.session_state and not acc_tbl_data:
+            for _lbl, (_nom, _vals) in st.session_state["bulk_acc"].items():
+                acc_tbl_data.append((_lbl, _nom, _vals))
+            st.info(f"📦 Bulk şablondan accuracy verisi yüklendi: {[d[0] for d in acc_tbl_data]}")
+
+        if acc_mode == "📁 CSV yükle":
+            st.caption(
+                "Beklenen sütunlar: **QC Seviyesi** (LLOQ/LQC/MQC/HQC), "
+                f"**Nominal C ({conc_unit})**, **ip(uA)** — her satır bir tekrar. "
+                "Üretilen `4_accuracy_recovery.csv` doğrudan yüklenebilir."
+            )
+            acc_up = st.file_uploader("Accuracy / Recovery CSV", type="csv", key="acc_up")
+            if acc_up:
+                try:
+                    df_acc_up = pd.read_csv(acc_up)
+                    df_acc_up.columns = [c.strip() for c in df_acc_up.columns]
+                    # QC seviye sütunu
+                    qc_col  = next((c for c in df_acc_up.columns if any(k in c.lower()
+                                    for k in ('qc','seviye','level','label'))), df_acc_up.columns[0])
+                    # Nominal konsantrasyon sütunu
+                    nom_col_up = next((c for c in df_acc_up.columns if any(k in c.lower()
+                                       for k in ('nominal','konsantrasyon','conc','c('))),
+                                      df_acc_up.columns[1] if len(df_acc_up.columns) > 1 else None)
+                    # ip sütunu
+                    ip_col_up  = next((c for c in df_acc_up.columns if any(k in c.lower()
+                                       for k in ('ip_olc','ip(','ip_m','current','akım',
+                                                  'ip_run','ip_1','i(a'))), None)
+                    # Geniş format: ip_run1, ip_run2 … sütunları varsa
+                    ip_run_cols = [c for c in df_acc_up.columns
+                                   if any(k in c.lower() for k in ('ip_run','run','tekrar'))
+                                   and c != qc_col and c != nom_col_up]
+
+                    if nom_col_up is None:
+                        st.error("Nominal konsantrasyon sütunu bulunamadı.")
+                    elif ip_col_up is None and not ip_run_cols:
+                        st.error("ip ölçüm sütunu bulunamadı.")
+                    else:
+                        st.dataframe(df_acc_up, use_container_width=True, hide_index=True)
+                        if ip_run_cols:
+                            # Geniş format (her sütun bir tekrar)
+                            for _, row in df_acc_up.iterrows():
+                                lbl = str(row[qc_col]).strip()
+                                try:
+                                    nom = float(row[nom_col_up])
+                                except (ValueError, TypeError):
+                                    continue
+                                vals = []
+                                for rc in ip_run_cols:
+                                    try:
+                                        if pd.notna(row[rc]):
+                                            vals.append(float(row[rc]))
+                                    except (ValueError, TypeError):
+                                        pass
+                                if vals:
+                                    acc_tbl_data.append((lbl, nom, vals))
+                        else:
+                            # Uzun format (her satır bir tekrar)
+                            for lbl, grp in df_acc_up.groupby(qc_col, sort=False):
+                                try:
+                                    nom = float(grp[nom_col_up].iloc[0])
+                                except (ValueError, TypeError):
+                                    continue
+                                vals = grp[ip_col_up].dropna().astype(float).tolist()
+                                if vals:
+                                    acc_tbl_data.append((str(lbl), nom, vals))
+                        st.success(f"✓ {len(acc_tbl_data)} QC seviyesi yüklendi: "
+                                   f"{[d[0] for d in acc_tbl_data]}")
+                except Exception as e:
+                    st.error(f"CSV okunamadı: {e}")
+        else:
+            default_acc = pd.DataFrame({
+                'QC Seviyesi':    ['LLOQ', 'LQC', 'MQC', 'HQC'],
+                f'Nominal C ({conc_unit})': [_lloq_v or None, _lqc_v or None,
+                                              _mqc_v or None, _hqc_v or None],
+                'ip_1 (µA)': [None]*4, 'ip_2 (µA)': [None]*4,
+                'ip_3 (µA)': [None]*4, 'ip_4 (µA)': [None]*4,
+                'ip_5 (µA)': [None]*4, 'ip_6 (µA)': [None]*4,
+            })
+            acc_tbl = st.data_editor(default_acc, num_rows="dynamic",
+                                      use_container_width=True, key="acc_tbl")
+            nom_col  = acc_tbl.columns[1]
+            ip_cols  = [c for c in acc_tbl.columns if c.startswith('ip_')]
+            for _, row in acc_tbl.iterrows():
+                lbl = str(row['QC Seviyesi']).strip() if pd.notna(row['QC Seviyesi']) else ''
+                if not lbl or lbl == 'None':
+                    continue
+                try:
+                    nom = float(row[nom_col])
+                except (ValueError, TypeError):
+                    continue
+                vals = []
+                for c in ip_cols:
+                    try:
+                        if pd.notna(row[c]):
+                            vals.append(float(row[c]))
+                    except (ValueError, TypeError):
+                        pass
+                if vals:
+                    acc_tbl_data.append((lbl, nom, vals))
 
         if st.button("▶ Accuracy Hesapla", key="btn_acc", type="secondary"):
             _qc_now = st.session_state.get("qc_points", {})
@@ -1488,26 +1750,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                     _i2 = np.array([float(np.mean(cal_data[c])) for c in sorted(cal_data)], float)
                     _sl, _ic, *_ = _stats2.linregress(_c2, _i2)
 
-                nom_col  = acc_tbl.columns[1]
-                ip_cols  = [c for c in acc_tbl.columns if c.startswith('ip_')]
                 acc_rows = []
-                for _, row in acc_tbl.iterrows():
-                    lbl = str(row['QC Seviyesi']).strip() if pd.notna(row['QC Seviyesi']) else ''
-                    if not lbl or lbl == 'None':
-                        continue
-                    try:
-                        nom_c = float(row[nom_col])
-                    except (ValueError, TypeError):
-                        st.warning(f"'{lbl}' satırında Nominal C eksik, atlandı.")
-                        continue
-                    vals = []
-                    for c in ip_cols:
-                        try:
-                            if pd.notna(row[c]):
-                                vals.append(float(row[c]))
-                        except (ValueError, TypeError):
-                            pass
-                    if not vals:
+                for lbl, nom_c, vals in acc_tbl_data:
+                    if not lbl or not vals or nom_c == 0:
                         continue
                     ip_mean  = float(np.mean(vals))
                     ip_std   = float(np.std(vals, ddof=1)) if len(vals) > 1 else 0.0
