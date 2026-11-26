@@ -1644,16 +1644,50 @@ elif page == "📊  Calibration & LOD/LOQ":
 
         with col_up2:
             st.markdown("**2 · Upload Filled Template**")
-            bulk_up = st.file_uploader("Upload filled template (.xlsx)",
-                                       type=["xlsx"], key="bulk_xlsx_up")
+            bulk_up = st.file_uploader("Upload filled template (.xlsx or .csv)",
+                                       type=["xlsx", "csv"], key="bulk_xlsx_up")
             if bulk_up:
                 try:
-                    import openpyxl as _opxl
-                    _wb = _opxl.load_workbook(bulk_up, data_only=True)
-                    _sheets = [s.title for s in _wb.worksheets]
-                    st.success(f"✓ Loaded — sheets: {', '.join(_sheets)}")
+                    _is_csv = bulk_up.name.lower().endswith(".csv")
+                    if _is_csv:
+                        # CSV → sadece Calibration sayfası olarak işle
+                        import io as _io
+                        bulk_up.seek(0)
+                        _df_csv = pd.read_csv(_io.BytesIO(bulk_up.read()), comment="#")
+                        bulk_up.seek(0)
+                        st.success(f"✓ CSV yüklendi — {len(_df_csv)} satır, sütunlar: {', '.join(_df_csv.columns.tolist())}")
+                        # Calibration formatına dönüştür: ilk sütun konsantrasyon, kalanlar replikat
+                        _conc_col = _df_csv.columns[0]
+                        _rep_cols = _df_csv.columns[1:]
+                        _bulk_cal_csv = {}
+                        for _, _r in _df_csv.iterrows():
+                            try:
+                                _c = float(_r[_conc_col])
+                            except (TypeError, ValueError):
+                                continue
+                            _vals = []
+                            for _rc in _rep_cols:
+                                try:
+                                    if pd.notna(_r[_rc]):
+                                        _vals.append(float(_r[_rc]))
+                                except (TypeError, ValueError):
+                                    pass
+                            if _vals:
+                                _bulk_cal_csv[_c] = _vals
+                        if _bulk_cal_csv:
+                            st.session_state["bulk_cal"] = _bulk_cal_csv
+                            st.caption(f"  Calibration: {len(_bulk_cal_csv)} konsantrasyon seviyesi aktarıldı.")
+                        else:
+                            st.warning("CSV'den kalibrasyon verisi çıkarılamadı. İlk sütun konsantrasyon, diğerleri replikat olmalı.")
+                    else:
+                        import openpyxl as _opxl
+                        _wb = _opxl.load_workbook(bulk_up, data_only=True)
+                        _sheets = [s.title for s in _wb.worksheets]
+                        st.success(f"✓ Loaded — sheets: {', '.join(_sheets)}")
 
-                    def _xl_sheet_to_df(wb, name):
+                    # ── Xlsx-only parsing (CSV path zaten yukarıda bitti) ────
+                    if not _is_csv:
+                      def _xl_sheet_to_df(wb, name):
                         """Return a sheet as a list-of-lists (row 0 = headers)."""
                         if name not in [s.title for s in wb.worksheets]:
                             return None
@@ -1661,9 +1695,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                         rows = list(ws.iter_rows(values_only=True))
                         return rows  # rows[0] = header
 
-                    # ── Calibration ─────────────────────────────────────────
-                    _cal_rows = _xl_sheet_to_df(_wb, "Calibration")
-                    if _cal_rows and len(_cal_rows) > 1:
+                      # ── Calibration ───────────────────────────────────────
+                      _cal_rows = _xl_sheet_to_df(_wb, "Calibration")
+                      if _cal_rows and len(_cal_rows) > 1:
                         _cal_hdr = _cal_rows[0]
                         _bulk_cal = {}
                         for _row in _cal_rows[1:]:
@@ -1686,9 +1720,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                             st.session_state["bulk_cal"] = _bulk_cal
                             st.caption(f"  Calibration: {len(_bulk_cal)} concentration levels imported.")
 
-                    # ── Repeatability ────────────────────────────────────────
-                    _rep_rows = _xl_sheet_to_df(_wb, "Repeatability")
-                    if _rep_rows and len(_rep_rows) > 1:
+                      # ── Repeatability ──────────────────────────────────────
+                      _rep_rows = _xl_sheet_to_df(_wb, "Repeatability")
+                      if _rep_rows and len(_rep_rows) > 1:
                         _bulk_rep = {}
                         for _row in _rep_rows[1:]:
                             if _row[0] is None:
@@ -1703,10 +1737,10 @@ elif page == "📊  Calibration & LOD/LOQ":
                             st.session_state["bulk_rep"] = _bulk_rep
                             st.caption(f"  Repeatability: {len(_bulk_rep)} levels imported.")
 
-                    # ── Inter_Precision ──────────────────────────────────────
-                    _ipr_rows = _xl_sheet_to_df(_wb, "Inter_Precision")
-                    if _ipr_rows and len(_ipr_rows) > 1:
-                        _bulk_ipr = {}  # {gun: {seviye: [ip_vals]}}
+                      # ── Inter_Precision ────────────────────────────────────
+                      _ipr_rows = _xl_sheet_to_df(_wb, "Inter_Precision")
+                      if _ipr_rows and len(_ipr_rows) > 1:
+                        _bulk_ipr = {}
                         for _row in _ipr_rows[1:]:
                             if _row[0] is None:
                                 continue
@@ -1721,10 +1755,10 @@ elif page == "📊  Calibration & LOD/LOQ":
                             st.session_state["bulk_ipr"] = _bulk_ipr
                             st.caption(f"  Intermediate Precision: {len(_bulk_ipr)} days imported.")
 
-                    # ── Accuracy ─────────────────────────────────────────────
-                    _acc_rows = _xl_sheet_to_df(_wb, "Accuracy")
-                    if _acc_rows and len(_acc_rows) > 1:
-                        _bulk_acc = {}  # {qc_lbl: (nominal_c, [ip_vals])}
+                      # ── Accuracy ──────────────────────────────────────────
+                      _acc_rows = _xl_sheet_to_df(_wb, "Accuracy")
+                      if _acc_rows and len(_acc_rows) > 1:
+                        _bulk_acc = {}
                         for _row in _acc_rows[1:]:
                             if _row[0] is None:
                                 continue
@@ -1741,9 +1775,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                             st.session_state["bulk_acc"] = _bulk_acc
                             st.caption(f"  Accuracy: {len(_bulk_acc)} QC levels imported.")
 
-                    # ── Std_Addition ─────────────────────────────────────────
-                    _sa_rows = _xl_sheet_to_df(_wb, "Std_Addition")
-                    if _sa_rows and len(_sa_rows) > 1:
+                      # ── Std_Addition ───────────────────────────────────────
+                      _sa_rows = _xl_sheet_to_df(_wb, "Std_Addition")
+                      if _sa_rows and len(_sa_rows) > 1:
                         _bulk_sa = []
                         for _row in _sa_rows[1:]:
                             try:
@@ -1755,10 +1789,10 @@ elif page == "📊  Calibration & LOD/LOQ":
                             st.session_state["bulk_sa"] = _bulk_sa
                             st.caption(f"  Standard Addition: {len(_bulk_sa)} points imported.")
 
-                    # Kalibrasyon verisini bulk'tan al
+                    # ── Her iki format için yükleme onayı ─────────────────────
                     if "bulk_cal" in st.session_state:
-                        st.info("✅ Template data loaded. Start the analysis below."
-                                " Data will be applied automatically when you open the ICH Q2 sections.")
+                        st.info("✅ Veri yüklendi. Aşağıdan analizi başlatın."
+                                " ICH Q2 bölümleri açıldığında veriler otomatik uygulanır.")
 
                 except Exception as _e:
                     st.error(f"Could not read template: {_e}")
