@@ -171,10 +171,29 @@ def fit_eis(df, label='Electrode', output_dir='.', p0=None):
         )
         Rs_f, Rct_f, Q_f, n_f, sigma_f = result.x
 
-        # χ²
-        Z_fit = randles_cpe_impedance(omega, Rs_f, Rct_f, Q_f, n_f, sigma_f)
-        residuals = np.concatenate([Zr - Z_fit.real, Zi - Z_fit.imag])
-        chi2 = np.sum(residuals**2) / (len(omega) * np.abs(Zr + 1j*Zi).mean()**2)
+        # ── Parametre belirsizlikleri (kovaryans matrisi) ──────────────────────
+        # least_squares Jacobian'ından standart hatalar:  σ_i = √(diag(C))
+        #   C = (J^T J)^{-1} × MSE,  MSE = Σres² / (N_obs - N_params)
+        # Rank-deficient durumlarda (sinyalsiz parametreler) NaN döndürülür.
+        J = result.jac
+        n_obs    = len(result.fun)
+        n_params = len(result.x)
+        mse      = np.sum(result.fun**2) / max(n_obs - n_params, 1)
+        try:
+            cov  = np.linalg.inv(J.T @ J) * mse
+            perr = np.sqrt(np.abs(np.diag(cov)))   # abs: sayısal gürültü ≥ 0
+        except np.linalg.LinAlgError:
+            perr = np.full(n_params, np.nan)
+
+        # ── χ² (modulus weighting — EIS literatür standardı) ──────────────────
+        # Her frekans noktası kendi |Z_exp|² ile normalleştirilir.
+        # Eski: ortalama |Z| ile normalizasyon → düşük-frekans veriye yanlı.
+        # Yeni: Σ[(ΔZr²+ΔZi²)/|Z_exp|²] / (2N - p)   [Orazem & Tribollet 2008]
+        Z_fit  = randles_cpe_impedance(omega, Rs_f, Rct_f, Q_f, n_f, sigma_f)
+        Zmag   = np.sqrt(Zr**2 + Zi**2)
+        chi2   = (np.sum((Zr - Z_fit.real)**2 / Zmag**2 +
+                         (Zi - Z_fit.imag)**2 / Zmag**2) /
+                  max(2*len(omega) - n_params, 1))
 
         params = {
             'label':  label,
@@ -184,6 +203,8 @@ def fit_eis(df, label='Electrode', output_dir='.', p0=None):
             'n_cpe':  n_f,
             'sigma':  sigma_f,
             'chi2':   chi2,
+            # Parametre standart hataları [Rs_err, Rct_err, Q_err, n_err, sigma_err]
+            'perr':   perr,
             'Z_fit':  Z_fit,
             'omega':  omega,
             'df':     df
@@ -380,13 +401,14 @@ def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1, plot_st
             res = fit_eis(df, label=label, output_dir=output_dir)
             if res:
                 fit_results.append(res)
-                print(f"    Rs    = {res['Rs']:.2f} Ω")
-                print(f"    Rct   = {res['Rct']:.2f} Ω")
-                print(f"    Q     = {res['Q']:.4e} S·s^n")
-                print(f"    n     = {res['n_cpe']:.4f}")
-                print(f"    σ     = {res['sigma']:.4f} Ω·s^(-1/2)")
+                pe = res.get('perr', [np.nan]*5)
+                print(f"    Rs    = {res['Rs']:.2f} ± {pe[0]:.2f} Ω")
+                print(f"    Rct   = {res['Rct']:.2f} ± {pe[1]:.2f} Ω")
+                print(f"    Q     = {res['Q']:.4e} ± {pe[2]:.2e} S·s^n")
+                print(f"    n     = {res['n_cpe']:.4f} ± {pe[3]:.4f}")
+                print(f"    σ     = {res['sigma']:.4f} ± {pe[4]:.4f} Ω·s^(-1/2)")
                 print(f"    C_eff = {res['C_eff_F']:.4e} F")
-                print(f"    χ²    = {res['chi2']:.4e}")
+                print(f"    χ²    = {res['chi2']:.4e}  {'✓ iyi fit' if res['chi2'] < 1e-3 else '⚠ fit kontrol edin'}")
         except Exception as e:
             print(f"    HATA: {e}")
 
@@ -406,15 +428,21 @@ def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1, plot_st
     # Parametre tablosu
     rows = []
     for r in fit_results:
+        pe = r.get('perr', [np.nan]*5)
         rows.append({
-            'Electrode':   r['label'],
-            'Rs (Ω)':      f"{r['Rs']:.2f}",
-            'Rct (Ω)':     f"{r['Rct']:.2f}",
-            'Q (S·sⁿ)':    f"{r['Q']:.4e}",
-            'n (CPE)':     f"{r['n_cpe']:.4f}",
-            'σ (Ω·s⁻¹/²)': f"{r['sigma']:.4f}",
-            'C_eff (F)':   f"{r['C_eff_F']:.4e}",
-            'χ²':          f"{r['chi2']:.4e}",
+            'Electrode':      r['label'],
+            'Rs (Ω)':         f"{r['Rs']:.2f}",
+            'Rs_err (Ω)':     f"{pe[0]:.2f}",
+            'Rct (Ω)':        f"{r['Rct']:.2f}",
+            'Rct_err (Ω)':    f"{pe[1]:.2f}",
+            'Q (S·sⁿ)':       f"{r['Q']:.4e}",
+            'Q_err':          f"{pe[2]:.2e}",
+            'n (CPE)':        f"{r['n_cpe']:.4f}",
+            'n_err':          f"{pe[3]:.4f}",
+            'σ (Ω·s⁻¹/²)':   f"{r['sigma']:.4f}",
+            'σ_err':          f"{pe[4]:.4f}",
+            'C_eff (F)':      f"{r['C_eff_F']:.4e}",
+            'χ² (mod.wt.)':   f"{r['chi2']:.4e}",
         })
     table_df = pd.DataFrame(rows)
 
