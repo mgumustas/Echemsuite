@@ -606,7 +606,7 @@ with st.sidebar:
         st.session_state.gemini_api_key = _gmk
         if _gmk:
             st.caption("✅ Gemini key active")
-            _GEM_MODELS = ["gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"]
+            _GEM_MODELS = ["gemini-3.8-flash","gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"]
             if "gemini_model" not in st.session_state:
                 st.session_state.gemini_model = _GEM_MODELS[0]
             st.session_state.gemini_model = st.selectbox(
@@ -797,7 +797,7 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
         _provider_label = "ChatGPT"
     elif _provider == "Gemini (Google)":
         _active_key   = st.session_state.get("gemini_api_key", "")
-        _active_model = st.session_state.get("gemini_model", "gemini-2.0-flash")
+        _active_model = st.session_state.get("gemini_model", "gemini-3.8-flash")
         _provider_label = "Gemini"
     else:
         _active_key   = st.session_state.get("api_key", "")
@@ -3569,7 +3569,7 @@ elif page == "📄  Report":
             elif _report_provider == "Gemini (Google)":
                 return _call_gemini(
                     st.session_state.get("gemini_api_key",""),
-                    st.session_state.get("gemini_model","gemini-2.0-flash"),
+                    st.session_state.get("gemini_model","gemini-3.8-flash"),
                     fn, kwargs)
             else:
                 return fn(api_key=st.session_state.get("api_key",""),
