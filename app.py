@@ -157,23 +157,6 @@ if _AUTH_AVAILABLE:
         <p style='color:#555'>Electrochemical Analysis Suite</p>
         <p style='color:#888;font-size:0.9rem'>Enter your credentials above to continue.</p>
         </div>""", unsafe_allow_html=True)
-        _ka = st.checkbox(
-            "🔁 Keep session alive (refresh every 4 min)",
-            value=st.session_state.get("keep_alive", False),
-            key="keep_alive_cb",
-            help="Stays active after login. The page refreshes silently — no data loss."
-        )
-        st.session_state["keep_alive"] = _ka
-        if _ka:
-            st.components.v1.html(
-                """<script>
-                if (!window._silKA) {
-                    window._silKA = true;
-                    setTimeout(function() { window.location.reload(); }, 240000);
-                }
-                </script>""",
-                height=0,
-            )
         st.stop()
     # ── logged in ───────────────────────────────────────────
     _current_user     = _auth_username or "guest"
@@ -606,6 +589,39 @@ def _csv_template_btn(csv_text: str, file_name: str, label: str = "⬇️ Downlo
         use_container_width=False,
     )
 
+def _metrics_csv_btn(metrics: dict, file_name: str):
+    """Render a download button that exports the metrics dict as a CSV."""
+    if not metrics:
+        return
+    import io as _io
+    _buf = _io.StringIO()
+    _buf.write("Metric,Value\n")
+    for k, v in metrics.items():
+        _buf.write(f"{str(k).replace(',','')},{str(v).replace(',','')}\n")
+    st.download_button(
+        label="📥 Download metrics as CSV",
+        data=_buf.getvalue().encode("utf-8"),
+        file_name=file_name,
+        mime="text/csv",
+        use_container_width=False,
+    )
+
+def _csv_preview(uploaded_file, n_rows: int = 5, key_prefix: str = "prev"):
+    """Show first n rows of an uploaded CSV inside an expander."""
+    if uploaded_file is None:
+        return
+    try:
+        uploaded_file.seek(0)
+        _df_prev = pd.read_csv(uploaded_file)
+        uploaded_file.seek(0)
+        with st.expander(f"🔍 Data preview — {uploaded_file.name} ({len(_df_prev)} rows × {len(_df_prev.columns)} columns)", expanded=False):
+            st.caption(f"**Detected columns:** {', '.join(f'`{c}`' for c in _df_prev.columns)}")
+            st.dataframe(_df_prev.head(n_rows), use_container_width=True, hide_index=True)
+            if len(_df_prev) > n_rows:
+                st.caption(f"Showing first {n_rows} of {len(_df_prev)} rows.")
+    except Exception as _e:
+        st.warning(f"⚠️ Could not preview `{uploaded_file.name}`: {_e}")
+
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                       result_key: str = "interpretation",
                       btn_key: str = None):
@@ -869,9 +885,17 @@ elif page == "📈  CV — Scan Rate Study":
     left,right = st.columns([1,1])
     with left:
         st.markdown('<div class="sec">Parameters</div>', unsafe_allow_html=True)
-        conc_mM    = st.number_input("Probe concentration (mM)", value=1.0)
-        diff_coeff = st.number_input("D (cm²/s)", value=7.6e-6, format="%.2e")
-        n_el       = st.number_input("n (electrons)", value=1, min_value=1, max_value=6)
+        cv_analyte = st.text_input("Electrode / analyte name",
+                                    value=st.session_state.get("cv_analyte", _cur().get("name","Modified Electrode")),
+                                    key="cv_analyte_inp",
+                                    help="Name used in AI interpretation and reports (e.g. 'Mn₃O₄/SPCE for dopamine').")
+        st.session_state["cv_analyte"] = cv_analyte
+        conc_mM    = st.number_input("Probe concentration (mM)", value=1.0,
+                                      help="Concentration of the redox probe in solution (e.g. 1 mM [Fe(CN)₆]³⁻). Used for ECSA calculation via Randles–Ševčík.")
+        diff_coeff = st.number_input("D (cm²/s)", value=7.6e-6, format="%.2e",
+                                      help="Diffusion coefficient of the redox probe in cm²/s. Literature value for [Fe(CN)₆]³⁻ in 0.1 M KCl ≈ 7.6×10⁻⁶ cm²/s.")
+        n_el       = st.number_input("n (electrons)", value=1, min_value=1, max_value=6,
+                                      help="Number of electrons transferred in the redox reaction (e.g. n=1 for Fe(CN)₆³⁻/⁴⁻, n=2 for hydroquinone). Used in Randles–Ševčík and Butler–Volmer equations.")
     with right:
         st.markdown('<div class="sec">Input mode</div>', unsafe_allow_html=True)
         cv_mode = _input_mode("cv_mode")
@@ -892,6 +916,8 @@ elif page == "📈  CV — Scan Rate Study":
                                    type="csv", accept_multiple_files=True)
         rate_map = {}
         if cv_ups:
+            for _f_prev in cv_ups:
+                _csv_preview(_f_prev, key_prefix=f"cv_{_f_prev.name}")
             st.markdown('<div class="sec">Assign scan rates (mV/s)</div>',
                         unsafe_allow_html=True)
             for f in cv_ups:
@@ -970,11 +996,12 @@ elif page == "📈  CV — Scan Rate Study":
                 m3.metric("b value",    f"{b:.4f}  ({lbl})")
                 m4.metric("k° (cm/s)",  metrics["k° (cm/s)"])
                 _save_analysis("cv", metrics, out)
+                _metrics_csv_btn(metrics, "cv_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>', unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"cv_analysis.zip")
                 _ai_interpret_btn("cv", interpret_cv,
                                    {"results": res,
-                                    "electrode_name": _cur().get("name","")})
+                                    "electrode_name": st.session_state.get("cv_analyte", _cur().get("name",""))})
             except ValueError as e:
                 st.error(str(e))
                 st.markdown("""
@@ -992,7 +1019,7 @@ elif page == "📈  CV — Scan Rate Study":
         st.info(f"Previous result from {a.get('timestamp','')} stored in this project.")
         _ai_interpret_btn("cv", interpret_cv,
                            {"results": {"ecsa":{},"mechanism":{},"k0":{}},
-                            "electrode_name": _cur().get("name","")})
+                            "electrode_name": st.session_state.get("cv_analyte", _cur().get("name",""))})
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1005,8 +1032,14 @@ elif page == "🔵  EIS — Impedance":
     left,right = st.columns([1,1])
     with left:
         st.markdown('<div class="sec">Parameters</div>', unsafe_allow_html=True)
+        eis_analyte = st.text_input("Electrode / analyte name",
+                                     value=st.session_state.get("eis_analyte", _cur().get("name","Modified Electrode")),
+                                     key="eis_analyte_inp",
+                                     help="Name used in AI interpretation and reports.")
+        st.session_state["eis_analyte"] = eis_analyte
         sign_z = st.selectbox("Z_imag sign",[-1,1],
-                               format_func=lambda x:"−1 (most potentiostats)" if x==-1 else "+1")
+                               format_func=lambda x:"−1 (most potentiostats)" if x==-1 else "+1",
+                               help="Convention used by your instrument for the imaginary impedance. Most potentiostats (Autolab, BioLogic, Gamry) export Z'' as negative values in the inductive quadrant. Select +1 only if your software already inverts the sign.")
     with right:
         st.markdown('<div class="sec">Input mode</div>', unsafe_allow_html=True)
         eis_mode = _input_mode("eis_mode")
@@ -1024,6 +1057,8 @@ elif page == "🔵  EIS — Impedance":
         )
         eis_ups = st.file_uploader("EIS files",type="csv",accept_multiple_files=True)
         if eis_ups:
+            for _f_prev in eis_ups:
+                _csv_preview(_f_prev, key_prefix=f"eis_{_f_prev.name}")
             st.markdown('<div class="sec">Electrode labels</div>',unsafe_allow_html=True)
             _eis_labels = []
             for i,f in enumerate(eis_ups):
@@ -1051,6 +1086,12 @@ elif page == "🔵  EIS — Impedance":
     else:
         st.markdown('<div class="sec">Enter Randles-CPE parameters per electrode</div>',
                     unsafe_allow_html=True)
+        st.info(
+            "**Rs** = solution resistance (Ω) | "
+            "**Rct** = charge-transfer resistance (Ω, lower = faster kinetics) | "
+            "**Q** = CPE pre-factor (F·s^(n−1)) | "
+            "**n_cpe** = CPE exponent (1 = ideal capacitor, <1 = rough/porous surface)"
+        )
         default_eis = pd.DataFrame({
             'Label':  ['Bare','Modified 1','Modified 2','Final'],
             'Rs_ohm': [35.0,33.0,31.0,29.0],
@@ -1097,6 +1138,7 @@ elif page == "🔵  EIS — Impedance":
                             pass
                     _eis_metrics["electrodes"] = list(file_dict.keys())
                 _save_analysis("eis", _eis_metrics, out, param_df=param_df)
+                _metrics_csv_btn({k:v for k,v in _eis_metrics.items() if k != "electrodes"}, "eis_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"eis_analysis.zip")
                 _ai_interpret_btn("eis",interpret_eis,
@@ -1121,8 +1163,10 @@ elif page == "🧪  pH — Working pH":
     left,right = st.columns([1,1])
     with left:
         st.markdown('<div class="sec">Parameters</div>',unsafe_allow_html=True)
-        ph_n_el = st.number_input("n (electrons)",value=2,min_value=1,max_value=6)
-        pk_type = st.selectbox("Peak type",["anodic","cathodic"])
+        ph_n_el = st.number_input("n (electrons)",value=2,min_value=1,max_value=6,
+                                   help="Number of electrons involved in the electrode reaction. Used to calculate the theoretical Nernst slope: −59.2 × m_H⁺ / n mV/pH at 25 °C. For most organic oxidations n=2.")
+        pk_type = st.selectbox("Peak type",["anodic","cathodic"],
+                                help="Direction of the peak you are tracking. Anodic (oxidation) peaks shift negatively with increasing pH; cathodic (reduction) peaks shift positively.")
         analyte_ph = st.text_input("Analyte (for report)",value="Analyte")
     with right:
         st.markdown('<div class="sec">Input mode</div>',unsafe_allow_html=True)
@@ -1140,8 +1184,8 @@ elif page == "🧪  pH — Working pH":
         )
         ph_up=st.file_uploader("pH table CSV",type="csv")
         if ph_up:
-            st.dataframe(pd.read_csv(ph_up).head(10),use_container_width=True,hide_index=True)
-            ph_up.seek(0); ph_path=os.path.join(tmpdir,"ph.csv")
+            _csv_preview(ph_up, key_prefix="ph")
+            ph_path=os.path.join(tmpdir,"ph.csv")
             Path(ph_path).write_bytes(ph_up.getvalue())
     else:
         st.markdown('<div class="sec">Enter pH data</div>',unsafe_allow_html=True)
@@ -1193,6 +1237,7 @@ elif page == "🧪  pH — Working pH":
                 m3.metric("m/n ratio",metrics["m/n ratio"])
                 m4.metric("Optimal pH",metrics["Optimal pH"])
                 _save_analysis("ph",metrics,out)
+                _metrics_csv_btn(metrics, "ph_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"ph_analysis.zip")
                 _ai_interpret_btn("ph",interpret_ph,
@@ -1811,7 +1856,8 @@ elif page == "📊  Calibration & LOD/LOQ":
         st.session_state["cal_unit"] = _unit_sel
         conc_unit = _unit_sel
         area_cal  = st.number_input("Electrode area (cm²) — optional",
-                                     value=0.0,min_value=0.0,format="%.4f")
+                                     value=0.0,min_value=0.0,format="%.4f",
+                                     help="Geometric electrode area used to normalise current density. Leave at 0 to skip normalisation. For GCE ⌀3 mm → 0.0707 cm².")
     with right:
         st.markdown('<div class="sec">Input mode</div>',unsafe_allow_html=True)
         cal_mode = _input_mode("cal_mode")
@@ -1829,9 +1875,8 @@ elif page == "📊  Calibration & LOD/LOQ":
         )
         cal_up=st.file_uploader("Calibration CSV",type="csv")
         if cal_up:
-            df_prev=pd.read_csv(cal_up)
-            st.dataframe(df_prev,use_container_width=True,hide_index=True)
-            cal_up.seek(0); df=pd.read_csv(cal_up); cc=df.columns[0]
+            _csv_preview(cal_up, key_prefix="cal")
+            df=pd.read_csv(cal_up); cc=df.columns[0]
             for _,row in df.iterrows():
                 try:
                     conc_val = float(row[cc])
@@ -2370,6 +2415,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                 m3.metric("r",  metrics["r"])
                 m4.metric("Slope",metrics["Slope"])
                 _save_analysis("cal",metrics,out)
+                _metrics_csv_btn(metrics, "calibration_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"calibration.zip")
                 _ai_interpret_btn("cal",interpret_calibration,
@@ -2417,9 +2463,8 @@ elif page == "➕  Standard Addition":
         )
         sa_up=st.file_uploader("Standard addition CSV",type="csv")
         if sa_up:
-            df_sa=pd.read_csv(sa_up)
-            st.dataframe(df_sa,use_container_width=True,hide_index=True)
-            sa_up.seek(0); df_sa2=pd.read_csv(sa_up)
+            _csv_preview(sa_up, key_prefix="sa")
+            df_sa2=pd.read_csv(sa_up)
             additions=df_sa2.iloc[:,0].tolist()
             ip_vals  =df_sa2.iloc[:,1].tolist()
     else:
@@ -2457,6 +2502,7 @@ elif page == "➕  Standard Addition":
                 m2.metric("R²",metrics["R²"])
                 m3.metric("Slope",metrics["Slope"])
                 _save_analysis("sa",metrics,out)
+                _metrics_csv_btn(metrics, "standard_addition_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"standard_addition.zip")
                 _ai_interpret_btn("sa",interpret_standard_addition,
@@ -2483,9 +2529,12 @@ elif page == "🧬  Selectivity":
 
     _sel_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="sel_analyte")
     _sel_unit    = st.text_input("Unit", value=st.session_state.get("cal_unit","µM"), key="sel_unit_inp")
-    _sel_conc    = st.number_input("Analyte concentration (µM)", value=10.0, min_value=0.0001, format="%.4f", key="sel_conc")
-    _sel_ref     = st.number_input("Reference signal — analyte alone (µA)", value=0.0, format="%.4f", key="sel_ref_sig")
-    _sel_thresh  = st.number_input("Acceptance threshold (± %)", value=5.0, min_value=0.1, max_value=50.0, format="%.1f", key="sel_thresh")
+    _sel_conc    = st.number_input("Analyte concentration (µM)", value=10.0, min_value=0.0001, format="%.4f", key="sel_conc",
+                                    help="Concentration of the target analyte used in the selectivity test. Interferents are typically tested at a 10× excess (e.g. 100 µM interferent vs 10 µM analyte).")
+    _sel_ref     = st.number_input("Reference signal — analyte alone (µA)", value=0.0, format="%.4f", key="sel_ref_sig",
+                                    help="Peak current measured for the analyte alone (no interferent present). Used as the 100% reference for all tolerance calculations.")
+    _sel_thresh  = st.number_input("Acceptance threshold (± %)", value=5.0, min_value=0.1, max_value=50.0, format="%.1f", key="sel_thresh",
+                                    help="Maximum allowed signal change (%) due to an interferent. ICH Q2(R2) commonly uses ±5% for pharmaceutical sensors. Biosensors in complex matrices may use ±10–15%.")
 
     st.markdown("#### Interferent Table")
     st.caption("One interferent per row. Enter concentration and measured peak current (µA).")
@@ -2579,8 +2628,10 @@ elif page == "📅  Stability":
     )
 
     _stab_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="stab_analyte")
-    _stab_nominal = st.number_input("Test concentration (µM)", value=10.0, min_value=0.001, format="%.4f", key="stab_nominal")
-    _stab_thresh  = st.number_input("Min. accepted % recovery", value=90.0, min_value=50.0, max_value=100.0, format="%.1f", key="stab_thresh")
+    _stab_nominal = st.number_input("Test concentration (µM)", value=10.0, min_value=0.001, format="%.4f", key="stab_nominal",
+                                     help="Known concentration of analyte used in stability tests. Recovery at each time point = (measured signal / day-0 signal) × 100%.")
+    _stab_thresh  = st.number_input("Min. accepted % recovery", value=90.0, min_value=50.0, max_value=100.0, format="%.1f", key="stab_thresh",
+                                     help="Minimum acceptable signal recovery (%). ICH Q2(R2) typically requires ≥ 90%. Lower thresholds may apply for complex matrix sensors or long storage studies.")
     _stab_unit    = st.text_input("Unit", value="µM", key="stab_unit")
 
     _csv_template_btn(
@@ -2593,6 +2644,7 @@ elif page == "📅  Stability":
     _stab_csv_up = st.file_uploader("Upload stability CSV (Day, Mean_signal_uA, [SD])", type="csv", key="stab_csv_up")
     _stab_rows = []
     if _stab_csv_up:
+        _csv_preview(_stab_csv_up, key_prefix="stab")
         try:
             _stab_df_up = pd.read_csv(_stab_csv_up)
             _cols = [c.lower().strip() for c in _stab_df_up.columns]
@@ -2697,6 +2749,12 @@ elif page == "🔬  Surface Characterization":
         "three key lines of evidence proving surface modification."
     )
 
+    _surf_electrode = st.text_input("Electrode / material name",
+                                     value=st.session_state.get("surf_electrode", _cur().get("name","Modified Electrode")),
+                                     key="surf_electrode_inp",
+                                     help="Name of the modified electrode system (e.g. 'Mn₃O₄/SPCE'). Used in AI interpretation and report headings.")
+    st.session_state["surf_electrode"] = _surf_electrode
+
     _surf_tabs = st.tabs(["🖼️ SEM Images", "⚡ EIS Nyquist", "🌊 CV Comparison"])
 
     # ── SEM ──────────────────────────────────────────────────
@@ -2770,8 +2828,10 @@ elif page == "🔬  Surface Characterization":
 
         st.markdown("**Rct values (from equivalent circuit fit)**")
         _rc1, _rc2 = st.columns(2)
-        _rct_bare = _rc1.number_input("Rct – Bare GCE (Ω)", value=0.0, min_value=0.0, format="%.1f", key="rct_bare")
-        _rct_mod  = _rc2.number_input("Rct – Modified (Ω)",  value=0.0, min_value=0.0, format="%.1f", key="rct_mod")
+        _rct_bare = _rc1.number_input("Rct – Bare GCE (Ω)", value=0.0, min_value=0.0, format="%.1f", key="rct_bare",
+                                       help="Charge-transfer resistance of the unmodified electrode from Randles equivalent circuit fit. Rct(bare) >> Rct(modified) means the modifier accelerates electron transfer.")
+        _rct_mod  = _rc2.number_input("Rct – Modified (Ω)",  value=0.0, min_value=0.0, format="%.1f", key="rct_mod",
+                                       help="Charge-transfer resistance after surface modification. A lower value indicates improved electrocatalytic activity. The ratio Rct(bare)/Rct(modified) quantifies the enhancement.")
 
         if _eis_data:
             import matplotlib.pyplot as plt
@@ -2866,10 +2926,14 @@ elif page == "🔬  Surface Characterization":
         st.markdown("**Peak current comparison (manual entry):**")
         _pcc1, _pcc2 = st.columns(2)
         _pcc3, _pcc4 = st.columns(2)
-        _ipa_bare = _pcc1.number_input("Ipa – Bare (µA)", value=0.0, format="%.3f", key="surf_ipa_bare")
-        _ipa_mod  = _pcc2.number_input("Ipa – Modified (µA)", value=0.0, format="%.3f", key="surf_ipa_mod")
-        _ipc_bare = _pcc3.number_input("Ipc – Bare (µA)", value=0.0, format="%.3f", key="surf_ipc_bare")
-        _ipc_mod  = _pcc4.number_input("Ipc – Modified (µA)", value=0.0, format="%.3f", key="surf_ipc_mod")
+        _ipa_bare = _pcc1.number_input("Ipa – Bare (µA)", value=0.0, format="%.3f", key="surf_ipa_bare",
+                                        help="Anodic (oxidation) peak current of the unmodified electrode in the probe solution (e.g. [Fe(CN)₆]³⁻). Enter as a positive value.")
+        _ipa_mod  = _pcc2.number_input("Ipa – Modified (µA)", value=0.0, format="%.3f", key="surf_ipa_mod",
+                                        help="Anodic peak current after surface modification. Enhancement = Ipa(modified)/Ipa(bare) × 100%. Values > 100% indicate improved electron transfer kinetics.")
+        _ipc_bare = _pcc3.number_input("Ipc – Bare (µA)", value=0.0, format="%.3f", key="surf_ipc_bare",
+                                        help="Cathodic (reduction) peak current of the bare electrode. Enter as a positive value (absolute).")
+        _ipc_mod  = _pcc4.number_input("Ipc – Modified (µA)", value=0.0, format="%.3f", key="surf_ipc_mod",
+                                        help="Cathodic peak current after modification. The Ipc/Ipa ratio should be close to 1.0 for a reversible redox process.")
         if _ipa_bare > 0 and _ipa_mod > 0:
             _enhancement = (_ipa_mod - _ipa_bare) / _ipa_bare * 100
             _m1s, _m2s, _m3s = st.columns(3)
@@ -2880,6 +2944,13 @@ elif page == "🔬  Surface Characterization":
                         delta_color="normal" if _enhancement > 0 else "inverse")
             if _enhancement > 0:
                 st.success(f"✅ Modified electrode shows {_enhancement:.1f}% higher peak current → enhanced electrocatalytic activity")
+            _metrics_csv_btn({
+                "Ipa Bare (µA)": f"{_ipa_bare:.3f}",
+                "Ipa Modified (µA)": f"{_ipa_mod:.3f}",
+                "Ipc Bare (µA)": f"{_ipc_bare:.3f}",
+                "Ipc Modified (µA)": f"{_ipc_mod:.3f}",
+                "Signal Enhancement": f"{_enhancement:+.1f}%",
+            }, "surface_cv_metrics.csv")
 
 # ═══════════════════════════════════════════════════════════
 # 📄  REPORT
@@ -2954,7 +3025,8 @@ elif page == "📄  Report":
                                                    .replace("%","").strip() or 90)}),
             "surf":(interpret_surface,
                                    lambda a: {"metrics": a.get("metrics",{}),
-                                               "electrode_name": proj.get("name","modified electrode")}),
+                                               "electrode_name": st.session_state.get("surf_electrode",
+                                                   proj.get("name","modified electrode"))}),
         }
 
         def _run_interp(key, fn, kwargs):
