@@ -182,15 +182,102 @@ Discuss:
 
 
 def interpret_calibration(api_key: str, results: dict,
-                           analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-5-5") -> str:
-    cr       = results.get("calibration", results)
-    lod      = cr.get("LOD",        "N/A")
-    loq      = cr.get("LOQ",        "N/A")
-    slope    = cr.get("slope",      "N/A")
-    intercept= cr.get("intercept",  "N/A")
-    r        = cr.get("r", cr.get("R2", "N/A"))
-    lr       = cr.get("linear_range", ["N/A", "N/A"])
+                           analyte: str = "analyte", unit: str = "µM",
+                           model: str = "claude-opus-5-5",
+                           precision_results: dict = None,
+                           accuracy_rows: list = None,
+                           sa_results: dict = None,
+                           journal: str = "",
+                           language: str = "English") -> str:
+    """
+    Calibration-only interpretation OR full ICH Q2(R2) validation report
+    when precision_results / accuracy_rows are provided.
+    """
+    cr        = results.get("calibration", results)
+    lod       = cr.get("LOD",        "N/A")
+    loq       = cr.get("LOQ",        "N/A")
+    slope     = cr.get("slope",      "N/A")
+    intercept = cr.get("intercept",  "N/A")
+    r         = cr.get("r", cr.get("R2", "N/A"))
+    lr        = cr.get("linear_range", ["N/A", "N/A"])
 
+    # ── Full validation report (bulk mode) ────────────────────────────────
+    if precision_results or accuracy_rows:
+        journal_note = (f" The manuscript targets {journal}." if journal else "")
+        lang_note    = (" Write the entire response in Turkish." if language == "Türkçe" else "")
+
+        # Build precision block
+        prec_block = ""
+        if precision_results:
+            intra_r = precision_results.get("intraday_results", {})
+            inter_r = precision_results.get("interday_results", {})
+            if intra_r:
+                prec_block += "\nRepeatability (intraday):\n"
+                for lbl, v in intra_r.items():
+                    prec_block += (f"  {lbl}: mean={v['mean']:.4f} µA, "
+                                   f"%RSD={v['rsd']:.2f}%, n={v['n']}, "
+                                   f"{'PASS' if v['pass'] else 'FAIL'} (≤2%)\n")
+            if inter_r:
+                prec_block += "\nIntermediate precision (interday):\n"
+                for lbl, v in inter_r.items():
+                    prec_block += (f"  {lbl}: mean={v['mean']:.4f} µA, "
+                                   f"%RSD={v['rsd']:.2f}%, n={v['n']}, "
+                                   f"{'PASS' if v['pass'] else 'FAIL'} (≤5%)\n")
+
+        # Build accuracy block
+        acc_block = ""
+        if accuracy_rows:
+            acc_block = "\nAccuracy / Recovery:\n"
+            for row in accuracy_rows:
+                acc_block += (f"  {row['QC Seviyesi']}: nominal={list(row.values())[1]} {unit}, "
+                              f"recovery={row['Geri Kazanım (%)']:.2f}%, "
+                              f"%RSD={row['ip %RSD']:.2f}%, "
+                              f"{'PASS' if 98<=row['Geri Kazanım (%)']<=102 else 'FAIL'}\n")
+
+        # Build standard addition block
+        sa_block = ""
+        if sa_results:
+            sa_block = (f"\nStandard addition: slope={sa_results.get('slope','N/A')}, "
+                        f"R²={sa_results.get('R2','N/A')}, "
+                        f"C_sample={sa_results.get('sample_concentration','N/A')} {unit}\n")
+
+        prompt = f"""You are an expert analytical chemist and scientific writer.
+Write a complete, publication-ready validation section for the following electrochemical sensor study.{journal_note}{lang_note}
+
+ANALYTE: {analyte}
+METHOD: Electrochemical sensor (voltammetry)
+
+=== CALIBRATION ===
+Linear equation: ip (µA) = {slope} × C + {intercept}   [C in {unit}]
+Correlation coefficient (r): {r}
+LOD (3σ/m, IUPAC): {lod} {unit}
+LOQ (10σ/m, IUPAC): {loq} {unit}
+Linear dynamic range: {lr[0]} – {lr[1]} {unit}
+{prec_block}{acc_block}{sa_block}
+
+INSTRUCTIONS:
+Write the following sections exactly as they would appear in a high-impact journal manuscript (Analytical Chemistry, Biosensors & Bioelectronics, ACS Sensors, Talanta level):
+
+**1. Methods – Analytical Validation (≈150 words)**
+Describe the validation approach referencing ICH Q2(R2) guideline. Mention calibration, repeatability, intermediate precision and accuracy protocols.
+
+**2. Results – Calibration Performance (≈200 words)**
+Report and interpret linearity, slope, r, LOD, LOQ. Compare LOD/LOQ to relevant literature values for {analyte} detection if known. Comment on electrocatalytic sensitivity.
+
+**3. Results – Precision and Accuracy (≈200 words)**
+Report %RSD values for repeatability and intermediate precision with pass/fail vs ICH criteria. Report recovery percentages for each QC level and assess ICH Q2(R2) compliance (98–102%).
+
+**4. Results – Standard Addition (≈100 words, skip if no data)**
+Interpret the standard addition result and discuss matrix effects compensation.
+
+**5. Table caption suggestion**
+Suggest one concise table title that covers the validation summary (calibration + precision + accuracy combined).
+
+Use precise numerical values from the data above. Use passive voice and present tense. Do not use bullet points — write flowing scientific prose."""
+
+        return _call(api_key, prompt, model)
+
+    # ── Calibration-only interpretation (original behaviour) ─────────────
     prompt = f"""Interpret the following analytical calibration results for {analyte}
 obtained with an electrochemical sensor.
 
