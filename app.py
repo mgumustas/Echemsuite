@@ -3398,6 +3398,48 @@ elif page == "🔬  Surface Characterization":
                 "Signal Enhancement": f"{_enhancement:+.1f}%",
             }, "surface_cv_metrics.csv")
 
+    # ── AI Interpretation ────────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 🤖 AI Interpretation")
+    st.caption("Generate a publication-ready interpretation of the surface characterization results.")
+
+    # Mevcut metriklerden AI için özet dict oluştur
+    _surf_ai_metrics = {}
+    _rct_b_ai = st.session_state.get("rct_bare", 0.0)
+    _rct_m_ai = st.session_state.get("rct_mod",  0.0)
+    if _rct_b_ai > 0 and _rct_m_ai > 0:
+        _surf_ai_metrics["Rct Bare (Ω)"]          = round(_rct_b_ai, 2)
+        _surf_ai_metrics["Rct Modified (Ω)"]       = round(_rct_m_ai, 2)
+        _surf_ai_metrics["Rct Ratio (Bare/Mod)"]   = round(_rct_b_ai / _rct_m_ai, 2)
+    _ipa_b_ai = st.session_state.get("surf_ipa_bare", 0.0)
+    _ipa_m_ai = st.session_state.get("surf_ipa_mod",  0.0)
+    if _ipa_b_ai > 0 and _ipa_m_ai > 0:
+        _surf_ai_metrics["Ipa Bare (µA)"]          = round(_ipa_b_ai, 3)
+        _surf_ai_metrics["Ipa Modified (µA)"]      = round(_ipa_m_ai, 3)
+        _surf_ai_metrics["Signal Enhancement"]     = f"{(_ipa_m_ai - _ipa_b_ai) / _ipa_b_ai * 100:+.1f}%"
+    _sem_note_ai = st.session_state.get("sem_note", "")
+    if _sem_note_ai:
+        _surf_ai_metrics["SEM observation"] = _sem_note_ai
+
+    if not _surf_ai_metrics:
+        st.info("💡 EIS veya CV verisi girin (Rct / Ipa alanlarını doldurun) — ardından AI yorumu üretebilirsiniz.")
+    else:
+        # Mevcut metrikleri göster
+        with st.expander("📊 Metrics sent to AI", expanded=False):
+            for _k, _v in _surf_ai_metrics.items():
+                st.write(f"**{_k}:** {_v}")
+        _ai_interpret_btn(
+            "surf",
+            interpret_surface,
+            {"metrics":        _surf_ai_metrics,
+             "electrode_name": st.session_state.get("surf_electrode", "Modified Electrode")},
+            result_key="surf_interp",
+            btn_key="ai_surf_inline",
+        )
+        if st.session_state.get("surf_interp"):
+            st.markdown("#### 📝 AI Commentary")
+            st.markdown(st.session_state["surf_interp"])
+
 # ═══════════════════════════════════════════════════════════
 # 📄  REPORT
 # ═══════════════════════════════════════════════════════════
