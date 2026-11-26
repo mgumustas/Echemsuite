@@ -2050,7 +2050,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                             with open(_rpaths["pdf"],"rb") as _pf:
                                 _rdl1.download_button(
                                     "⬇️ Download PDF", _pf.read(),
-                                    file_name=f"{_banalyte}_ICH_Q2R2_Validation.pdf",
+                                    file_name=f"{st.session_state.get('bulk_analyte','Analyte')}_ICH_Q2R2_Validation.pdf",
                                     mime="application/pdf",
                                     use_container_width=True,
                                 )
@@ -2061,7 +2061,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                             with open(_rpaths["docx"],"rb") as _wf:
                                 _rdl2.download_button(
                                     "⬇️ Download Word (.docx)", _wf.read(),
-                                    file_name=f"{_banalyte}_ICH_Q2R2_Validation.docx",
+                                    file_name=f"{st.session_state.get('bulk_analyte','Analyte')}_ICH_Q2R2_Validation.docx",
                                     mime="application/vnd.openxmlformats-officedocument"
                                           ".wordprocessingml.document",
                                     use_container_width=True,
@@ -2831,7 +2831,8 @@ elif page == "🧬  Selectivity":
         _sel_tmpl_lines = [
             "# SilverstoneLab — Selectivity Template",
             "# Sütunlar: Interferent adı | Konsantrasyon (µM) | Ölçülen sinyal (µA)",
-            "# Analite sinyal (referans) için ayrı bir satır YOK — aşağıdaki Reference Signal alanına girin",
+            "# Analite referans sinyalini aşağıdaki satıra girin (µA cinsinden):",
+            "# Reference_Signal_uA: 0.0",
             "Interferent,Concentration_uM,Signal_uA",
             "Ascorbic Acid,100.0,0.0",
             "Uric Acid,100.0,0.0",
@@ -2861,8 +2862,18 @@ elif page == "🧬  Selectivity":
                 try:
                     import io as _io_sel_up
                     _sel_up.seek(0)
-                    _df_sel = pd.read_csv(_io_sel_up.BytesIO(_sel_up.read()), comment="#")
-                    _sel_up.seek(0)
+                    _sel_raw = _sel_up.read().decode("utf-8", errors="replace")
+                    # Metadata satırından referans sinyali oku
+                    _ref_from_csv = None
+                    for _line in _sel_raw.splitlines():
+                        _line = _line.strip()
+                        if _line.lower().startswith("# reference_signal_ua:"):
+                            try:
+                                _ref_from_csv = float(_line.split(":", 1)[1].strip())
+                            except ValueError:
+                                pass
+                            break
+                    _df_sel = pd.read_csv(_io_sel_up.BytesIO(_sel_raw.encode("utf-8")), comment="#")
                     # Normalize sütun isimleri
                     _df_sel.columns = [c.strip() for c in _df_sel.columns]
                     _name_col = _df_sel.columns[0]
@@ -2881,7 +2892,11 @@ elif page == "🧬  Selectivity":
                             st.session_state[f"sel_int_sig_{_idx}"] = float(_row[_sig_col]) if _sig_col else 0.0
                         except (TypeError, ValueError):
                             st.session_state[f"sel_int_sig_{_idx}"] = 0.0
-                    st.success(f"✓ {_n_loaded} interferent yüklendi — aşağıdaki tabloyu kontrol edin.")
+                    # Referans sinyal varsa widget'a yaz
+                    if _ref_from_csv is not None:
+                        st.session_state["sel_ref_sig"] = _ref_from_csv
+                    _ref_msg = f" | Referans sinyal: {_ref_from_csv:.4f} µA" if _ref_from_csv is not None else " | ⚠️ Referans sinyal CSV'de bulunamadı — aşağıdaki alana giriniz."
+                    st.success(f"✓ {_n_loaded} interferent yüklendi{_ref_msg}")
                     st.rerun()
                 except Exception as _e:
                     st.error(f"CSV okunamadı: {_e}")
