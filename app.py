@@ -789,6 +789,24 @@ elif page == "📈  CV — Scan Rate Study":
                 p = os.path.join(tmpdir, f"cv_{int(rate)}mVs.csv")
                 Path(p).write_bytes(fobj.getvalue())
                 disk_map[rate] = p
+            # ── Renk seçiciler ───────────────────────────────────────────
+            if rate_map:
+                _cv_base = st.session_state.get("plot_style",{}).get(
+                    "colors", ['#1f4e79','#c55a11','#375623','#7030a0',
+                               '#843c0c','#1f77b4','#ff7f0e','#2ca02c'])
+                st.markdown('<div class="sec">🎨 Dataset Colors</div>',
+                            unsafe_allow_html=True)
+                _sorted_rates = sorted(rate_map.keys())
+                _ncols        = min(len(_sorted_rates), 4)
+                _cv_color_cols= st.columns(_ncols)
+                _cv_colors    = []
+                for _ci, _rate in enumerate(_sorted_rates):
+                    _def = _cv_base[_ci % len(_cv_base)]
+                    _pk  = _cv_color_cols[_ci % _ncols].color_picker(
+                        f"{int(_rate)} mV/s", _def,
+                        key=f"cv_col_{int(_rate)}")
+                    _cv_colors.append(_pk)
+                st.session_state["cv_custom_colors"] = _cv_colors
     else:
         st.markdown('<div class="sec">Enter peak data</div>', unsafe_allow_html=True)
         default_cv = pd.DataFrame({
@@ -810,8 +828,11 @@ elif page == "📈  CV — Scan Rate Study":
         with st.spinner("Analysing…"):
             out = os.path.join(tmpdir,"cv_out"); os.makedirs(out,exist_ok=True)
             try:
+                _cv_ps = dict(st.session_state.get("plot_style") or {})
+                if st.session_state.get("cv_custom_colors"):
+                    _cv_ps["colors"] = st.session_state["cv_custom_colors"]
                 res = run_cv_analysis(disk_map,conc_mM,diff_coeff,int(n_el),out,
-                                      plot_style=st.session_state.get("plot_style"))
+                                      plot_style=_cv_ps)
                 st.success("✅ Done — results saved to project")
                 ecsa = res.get('ecsa',{}); mech = res.get('mechanism',{})
                 k0   = res.get('k0',{})
@@ -878,12 +899,29 @@ elif page == "🔵  EIS — Impedance":
         eis_ups = st.file_uploader("EIS files",type="csv",accept_multiple_files=True)
         if eis_ups:
             st.markdown('<div class="sec">Electrode labels</div>',unsafe_allow_html=True)
+            _eis_labels = []
             for i,f in enumerate(eis_ups):
                 lbl = st.text_input(f"`{f.name}`",
                                      value=f.name.replace('.csv','').replace('_',' '),
                                      key=f"eis_l{i}")
                 p = os.path.join(tmpdir,f"eis_{i}.csv")
                 Path(p).write_bytes(f.getvalue()); file_dict[lbl]=p
+                _eis_labels.append(lbl)
+            # ── Renk seçiciler ───────────────────────────────────────────
+            _eis_base = st.session_state.get("plot_style",{}).get(
+                "colors", ['#1f4e79','#c55a11','#375623','#7030a0',
+                           '#843c0c','#1f77b4','#ff7f0e','#2ca02c'])
+            st.markdown('<div class="sec">🎨 Dataset Colors</div>',
+                        unsafe_allow_html=True)
+            _eis_ncols      = min(len(_eis_labels), 4)
+            _eis_color_cols = st.columns(_eis_ncols)
+            _eis_colors     = []
+            for _ci, _lbl in enumerate(_eis_labels):
+                _def = _eis_base[_ci % len(_eis_base)]
+                _pk  = _eis_color_cols[_ci % _eis_ncols].color_picker(
+                    _lbl[:18], _def, key=f"eis_col_{_ci}")
+                _eis_colors.append(_pk)
+            st.session_state["eis_custom_colors"] = _eis_colors
     else:
         st.markdown('<div class="sec">Enter Randles-CPE parameters per electrode</div>',
                     unsafe_allow_html=True)
@@ -908,8 +946,11 @@ elif page == "🔵  EIS — Impedance":
         with st.spinner("Fitting…"):
             out=os.path.join(tmpdir,"eis_out"); os.makedirs(out,exist_ok=True)
             try:
+                _eis_ps = dict(st.session_state.get("plot_style") or {})
+                if st.session_state.get("eis_custom_colors"):
+                    _eis_ps["colors"] = st.session_state["eis_custom_colors"]
                 _eis_result=run_eis_analysis(file_dict,out,sign_zimag=sign_z,
-                                             plot_style=st.session_state.get("plot_style"))
+                                             plot_style=_eis_ps)
                 param_df = _eis_result[0] if isinstance(_eis_result, tuple) else _eis_result
                 fit_results = _eis_result[1] if isinstance(_eis_result, tuple) and len(_eis_result)>1 else None
                 st.success("✅ Done — results saved to project")
@@ -976,12 +1017,27 @@ elif page == "🧪  pH — Working pH":
         if len(clean)>=3:
             ph_path=os.path.join(tmpdir,"ph.csv"); clean.to_csv(ph_path,index=False)
 
+    # ── pH Renk seçiciler ─────────────────────────────────────────────────
+    _ph_base = st.session_state.get("plot_style",{}).get(
+        "colors", ['#1f4e79','#c55a11'])
+    st.markdown('<div class="sec">🎨 Plot Colors</div>', unsafe_allow_html=True)
+    _phc1, _phc2 = st.columns(2)
+    _ph_data_col = _phc1.color_picker(
+        "Data points", _ph_base[0], key="ph_col_data")
+    _ph_fit_col  = _phc2.color_picker(
+        "Fit line",    _ph_base[1] if len(_ph_base)>1 else '#c55a11',
+        key="ph_col_fit")
+    st.session_state["ph_custom_colors"] = [_ph_data_col, _ph_fit_col]
+
     if ph_path and st.button("▶ Run pH Analysis",type="primary",use_container_width=True):
         with st.spinner("Analysing…"):
             out=os.path.join(tmpdir,"ph_out"); os.makedirs(out,exist_ok=True)
             try:
+                _ph_ps = dict(st.session_state.get("plot_style") or {})
+                _ph_ps["colors"] = st.session_state.get(
+                    "ph_custom_colors", _ph_ps.get("colors", ['#1f4e79','#c55a11']))
                 res=run_ph_analysis(ph_path,int(ph_n_el),pk_type,out,
-                                    plot_style=st.session_state.get("plot_style"))
+                                    plot_style=_ph_ps)
                 st.success("✅ Done — results saved to project")
                 theory=-59.2*res.get('m_proton',ph_n_el)/int(ph_n_el)
                 metrics={
@@ -1057,6 +1113,18 @@ elif page == "📊  Calibration & LOD/LOQ":
         for _,row in cal_tbl.dropna(subset=[cc,'ip_1 (µA)']).iterrows():
             vals=[float(row[c]) for c in cal_tbl.columns[1:] if pd.notna(row[c])]
             if vals: cal_data[float(row[cc])]=vals
+
+    # ── Kalibrasyon Renk Seçiciler ────────────────────────────
+    _cal_base = st.session_state.get("plot_style",{}).get(
+        "colors", ['#1f4e79','#c55a11'])
+    st.markdown('<div class="sec">🎨 Plot Colors</div>', unsafe_allow_html=True)
+    _calc1, _calc2 = st.columns(2)
+    _cal_data_col = _calc1.color_picker(
+        "Data points & error bars", _cal_base[0], key="cal_col_data")
+    _cal_fit_col  = _calc2.color_picker(
+        "Fit line",  _cal_base[1] if len(_cal_base)>1 else '#c55a11',
+        key="cal_col_fit")
+    st.session_state["cal_custom_colors"] = [_cal_data_col, _cal_fit_col]
 
     # ── ICH Q2(R2) Precision Validation ──────────────────────
     st.divider()
@@ -1211,11 +1279,14 @@ elif page == "📊  Calibration & LOD/LOQ":
             tmpdir=tempfile.mkdtemp()
             out=os.path.join(tmpdir,"cal_out"); os.makedirs(out)
             try:
+                _cal_ps = dict(st.session_state.get("plot_style") or {})
+                _cal_ps["colors"] = st.session_state.get(
+                    "cal_custom_colors", _cal_ps.get("colors", ['#1f4e79','#c55a11']))
                 res=run_analytical_performance(
                     calibration_source=cal_data,analyte_name=analyte,
                     electrode_area_cm2=float(area_cal) if area_cal>0 else None,
                     unit=conc_unit,output_dir=out,
-                    plot_style=st.session_state.get("plot_style"))
+                    plot_style=_cal_ps)
                 st.success("✅ Done — results saved to project")
                 cr=res.get('calibration',res)
                 lr=cr.get('linear_range',['?','?'])
