@@ -35,7 +35,8 @@ plt.rcParams.update({
     'figure.dpi': 150, 'savefig.dpi': 300, 'savefig.bbox': 'tight',
 })
 
-COLORS = ['#1f4e79', '#c55a11', '#375623', '#7030a0', '#843c0c',
+# CSS ile senkronize ana palet — primary: #1a3a5c, secondary: #2b7cb8
+COLORS = ['#1a3a5c', '#c55a11', '#375623', '#7030a0', '#843c0c',
           '#1f77b4', '#ff7f0e', '#2ca02c']
 
 WATERMARK_TEXT  = '© SilverstoneLab'
@@ -44,7 +45,7 @@ WATERMARK_ALPHA = 0.18
 def _add_watermark(fig):
     """Her sekle SilverstoneLab filigrani ekler."""
     fig.text(0.98, 0.01, WATERMARK_TEXT,
-             fontsize=8, color='#1f4e79', alpha=WATERMARK_ALPHA,
+             fontsize=8, color='#1a3a5c', alpha=WATERMARK_ALPHA,
              ha='right', va='bottom', style='italic',
              transform=fig.transFigure)
 
@@ -710,7 +711,7 @@ def _export_calibration_excel(cal_data, cal_results,
     wb = Workbook()
 
     # ── Stil yardımcıları ──────────────────────────────────────────────────
-    NAVY   = "1F4E79"
+    NAVY   = "1A3A5C"  # CSS primary ile senkronize
     ORANGE = "C55A11"
     LGRAY  = "D9E1F2"
     MGRAY  = "BDD7EE"
