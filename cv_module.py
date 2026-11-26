@@ -85,17 +85,36 @@ def load_cv_files(file_dict):
             df = pd.read_csv(path, comment='#')
             # Sütun adlarını normalize et
             df.columns = [c.strip().lower() for c in df.columns]
-            # Potential sütununu bul
-            pot_col = next((c for c in df.columns if 'pot' in c or 'volt' in c or c == 'e'), None)
-            cur_col = next((c for c in df.columns if 'cur' in c or c == 'i'), None)
+            # Potential sütununu bul — geniş anahtar kelime eşleşmesi
+            pot_col = next((c for c in df.columns
+                            if any(k in c for k in ('pot', 'volt', 'e(v)', 'e_v', 'we'))
+                            or c in ('e', 'v', 'u')), None)
+            cur_col = next((c for c in df.columns
+                            if any(k in c for k in ('cur', 'i(a', 'i(u', 'i_a', 'i_u',
+                                                     'ampere', 'amps', 'ma', 'ua', 'μa'))
+                            or c in ('i', 'j')), None)
             if pot_col is None or cur_col is None:
                 # İlk iki sütunu kullan
                 df.columns = ['Potential', 'Current'] + list(df.columns[2:])
             else:
                 df = df.rename(columns={pot_col: 'Potential', cur_col: 'Current'})
             df = df[['Potential', 'Current']].dropna().astype(float)
+
+            # ── Akım birimi otomatik tespiti ─────────────────────────────
+            # Tipik CV pikler genellikle 0.1–1000 μA aralığında.
+            # |I| > 1e-3 A ise veri büyük olasılıkla μA cinsinden → A'ya çevir.
+            # |I| > 1   A ise veri mA cinsinden → A'ya çevir.
+            I_abs_med = np.median(np.abs(df['Current'].values))
+            _unit_note = ""
+            if I_abs_med > 1.0:          # mA gibi görünüyor
+                df['Current'] = df['Current'] * 1e-3
+                _unit_note = " [mA→A dönüşümü uygulandı]"
+            elif I_abs_med > 1e-3:       # μA gibi görünüyor
+                df['Current'] = df['Current'] * 1e-6
+                _unit_note = " [μA→A dönüşümü uygulandı]"
+
             data[float(rate)] = df
-            print(f"  ✓ {rate} mV/s yüklendi ({len(df)} nokta)")
+            print(f"  ✓ {rate} mV/s yüklendi ({len(df)} nokta){_unit_note}")
         except Exception as e:
             print(f"  ✗ {rate} mV/s yüklenemedi: {e}")
     return data
@@ -108,6 +127,10 @@ def find_cv_peaks(df, smooth=True, window=11, polyorder=3):
     """
     CV eğrisinden anodik ve katodik pikleri bulur.
 
+    Basamaklı prominence stratejisi:
+      1. std × [0.5, 0.3, 0.15, 0.05] ile sırayla dene
+      2. Hiçbiri bulamazsa argmax/argmin fallback kullan
+
     Returns
     -------
     dict: {
@@ -115,44 +138,70 @@ def find_cv_peaks(df, smooth=True, window=11, polyorder=3):
         'ipa': anodik pik akımı (A),
         'Epc': katodik pik potansiyeli (V),
         'ipc': katodik pik akımı (A),
-        'delta_Ep': ΔEp = Epa - Epc (mV)
+        'delta_Ep': ΔEp = Epa - Epc (mV),
+        '_detection_method': hangi yöntemle bulundu (teşhis için)
     }
     """
     E = df['Potential'].values
     I = df['Current'].values
 
-    if smooth and len(I) > window:
-        I_smooth = savgol_filter(I, window_length=window, polyorder=polyorder)
+    # Pencere boyutu veriye göre ayarla
+    _win = min(window, len(I) // 4 * 2 + 1)  # tek sayı, veri uzunluğuna uygun
+    _win = max(_win, 5)
+    if smooth and len(I) > _win:
+        I_smooth = savgol_filter(I, window_length=_win, polyorder=min(polyorder, _win-1))
     else:
-        I_smooth = I
+        I_smooth = I.copy()
 
-    # Anodik pik (maksimum akım)
-    anodic_peaks, anodic_props = find_peaks(I_smooth, prominence=np.std(I_smooth)*0.5)
-    # Katodik pik (minimum akım = ters işaret maksimumu)
-    cathodic_peaks, cathodic_props = find_peaks(-I_smooth, prominence=np.std(I_smooth)*0.5)
+    _sigma = np.std(I_smooth)
+
+    def _search_peaks(signal, prominence_factors=(0.5, 0.3, 0.15, 0.05, 0.01)):
+        """Basamaklı prominence ile pik ara; bulamazsa None döndür."""
+        for pf in prominence_factors:
+            prom = _sigma * pf
+            if prom == 0:
+                break
+            peaks, props = find_peaks(signal, prominence=prom)
+            if len(peaks) > 0:
+                return peaks, props, pf
+        return None, None, None
 
     result = {}
+    method_a = method_c = "prominence"
 
-    if len(anodic_peaks) > 0:
-        # En belirgin anodik pik
-        idx = anodic_peaks[np.argmax(anodic_props['prominences'])]
+    # ── Anodik pik ────────────────────────────────────────────
+    a_peaks, a_props, a_pf = _search_peaks(I_smooth)
+    if a_peaks is not None and len(a_peaks) > 0:
+        idx = a_peaks[np.argmax(a_props['prominences'])]
         result['Epa'] = E[idx]
         result['ipa'] = I[idx]
+        method_a = f"prominence×{a_pf}"
     else:
-        result['Epa'] = np.nan
-        result['ipa'] = np.nan
+        # Fallback: mutlak maksimum (çevre ortalamasından belirgin şekilde farklıysa)
+        idx = int(np.argmax(I_smooth))
+        result['Epa'] = E[idx]
+        result['ipa'] = I[idx]
+        method_a = "argmax-fallback"
 
-    if len(cathodic_peaks) > 0:
-        idx = cathodic_peaks[np.argmax(cathodic_props['prominences'])]
+    # ── Katodik pik ───────────────────────────────────────────
+    c_peaks, c_props, c_pf = _search_peaks(-I_smooth)
+    if c_peaks is not None and len(c_peaks) > 0:
+        idx = c_peaks[np.argmax(c_props['prominences'])]
         result['Epc'] = E[idx]
         result['ipc'] = I[idx]
+        method_c = f"prominence×{c_pf}"
     else:
-        result['Epc'] = np.nan
-        result['ipc'] = np.nan
+        idx = int(np.argmin(I_smooth))
+        result['Epc'] = E[idx]
+        result['ipc'] = I[idx]
+        method_c = "argmin-fallback"
 
+    result['_detection_method'] = f"anodic={method_a}, cathodic={method_c}"
+
+    # ── ΔEp ve E½ ─────────────────────────────────────────────
     if not np.isnan(result.get('Epa', np.nan)) and not np.isnan(result.get('Epc', np.nan)):
         result['delta_Ep'] = abs(result['Epa'] - result['Epc']) * 1000  # mV
-        result['E_half'] = (result['Epa'] + result['Epc']) / 2          # E₁/₂ formal potential (V)
+        result['E_half'] = (result['Epa'] + result['Epc']) / 2          # E₁/₂ (V)
     else:
         result['delta_Ep'] = np.nan
         result['E_half'] = np.nan
