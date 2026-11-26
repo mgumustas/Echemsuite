@@ -291,25 +291,6 @@ with st.sidebar:
                                    st.session_state.get(_user_key("current_project"), ""))
                 st.success("Saved")
 
-    # ── Password change ──────────────────────────────────────
-    with st.expander("🔑 Change my password"):
-        if _AUTH_AVAILABLE:
-            try:
-                _authenticator.reset_password(_current_username if hasattr(
-                    _authenticator,'_current_username') else _current_user,
-                    location="sidebar")
-                st.success("Password updated!")
-            except Exception:
-                # newer API
-                try:
-                    if _authenticator.reset_password(_current_user, location="sidebar"):
-                        _save_config(_cfg)
-                        st.success("Password updated!")
-                except Exception as e:
-                    st.caption(str(e))
-        else:
-            st.caption("Auth not available in dev mode.")
-
     with st.expander("💾 Export / Import project"):
         cp = _cur()
         if cp:
@@ -364,36 +345,76 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Claude API key ───────────────────────────────────────
-    st.markdown("### 🤖 Claude AI")
-    api_key_input = st.text_input("API key (console.anthropic.com)",
-                                   value=st.session_state.api_key,
-                                   type="password", key="api_key_input",
-                                   placeholder="sk-ant-...")
-    st.session_state.api_key = api_key_input
-    if api_key_input:
-        st.caption("✅ API key saved for this session")
-    else:
-        st.caption("Enter key to enable AI interpretations")
-    _MODEL_OPTIONS = [
-        "claude-opus-5-5",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-5",
-        "claude-3-5-sonnet-20241022",
-    ]
-    if "ai_model" not in st.session_state:
-        st.session_state.ai_model = _MODEL_OPTIONS[0]
-    st.session_state.ai_model = st.selectbox(
-        "Model", _MODEL_OPTIONS,
-        index=_MODEL_OPTIONS.index(st.session_state.ai_model)
-              if st.session_state.ai_model in _MODEL_OPTIONS else 0,
-        key="ai_model_select"
-    )
+    # ── AI Configuration ─────────────────────────────────────
+    st.markdown("### 🤖 AI Configuration")
+    # Session state defaults
+    for _k, _d in [("api_key",""), ("openai_api_key",""), ("gemini_api_key",""),
+                   ("ai_provider","Claude")]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _d
+
+    _ai_provider = st.selectbox("Provider", ["Claude (Anthropic)", "ChatGPT (OpenAI)", "Gemini (Google)"],
+                                 key="ai_provider_select")
+    st.session_state.ai_provider = _ai_provider
+
+    if _ai_provider == "Claude (Anthropic)":
+        _ak = st.text_input("Claude API key", value=st.session_state.api_key,
+                             type="password", key="api_key_input", placeholder="sk-ant-...")
+        st.session_state.api_key = _ak
+        if _ak:
+            st.caption("✅ Claude key active")
+            _MODEL_OPTIONS = ["claude-opus-5-5","claude-sonnet-4-6",
+                              "claude-sonnet-4-5","claude-3-5-sonnet-20241022"]
+            if "ai_model" not in st.session_state:
+                st.session_state.ai_model = _MODEL_OPTIONS[0]
+            st.session_state.ai_model = st.selectbox(
+                "Model", _MODEL_OPTIONS,
+                index=_MODEL_OPTIONS.index(st.session_state.ai_model)
+                      if st.session_state.ai_model in _MODEL_OPTIONS else 0,
+                key="ai_model_select")
+        else:
+            st.caption("console.anthropic.com → API Keys")
+            if "ai_model" not in st.session_state:
+                st.session_state.ai_model = "claude-opus-5-5"
+
+    elif _ai_provider == "ChatGPT (OpenAI)":
+        _gk = st.text_input("OpenAI API key", value=st.session_state.openai_api_key,
+                             type="password", key="gpt_key_input", placeholder="sk-...")
+        st.session_state.openai_api_key = _gk
+        if _gk:
+            st.caption("✅ OpenAI key active")
+            _GPT_MODELS = ["gpt-4o","gpt-4o-mini","gpt-4-turbo","gpt-3.5-turbo"]
+            if "gpt_model" not in st.session_state:
+                st.session_state.gpt_model = _GPT_MODELS[0]
+            st.session_state.gpt_model = st.selectbox(
+                "Model", _GPT_MODELS,
+                index=_GPT_MODELS.index(st.session_state.gpt_model)
+                      if st.session_state.gpt_model in _GPT_MODELS else 0,
+                key="gpt_model_select")
+        else:
+            st.caption("platform.openai.com → API Keys")
+
+    else:  # Gemini
+        _gmk = st.text_input("Gemini API key", value=st.session_state.gemini_api_key,
+                              type="password", key="gemini_key_input", placeholder="AIza...")
+        st.session_state.gemini_api_key = _gmk
+        if _gmk:
+            st.caption("✅ Gemini key active")
+            _GEM_MODELS = ["gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"]
+            if "gemini_model" not in st.session_state:
+                st.session_state.gemini_model = _GEM_MODELS[0]
+            st.session_state.gemini_model = st.selectbox(
+                "Model", _GEM_MODELS,
+                index=_GEM_MODELS.index(st.session_state.gemini_model)
+                      if st.session_state.gemini_model in _GEM_MODELS else 0,
+                key="gemini_model_select")
+        else:
+            st.caption("aistudio.google.com → Get API key")
 
     st.divider()
 
     # ── Navigation ───────────────────────────────────────────
-    page = st.radio(f"navigate_{_current_user}", label_visibility="collapsed", options=[
+    _NAV_OPTIONS = [
         "🏠  Home",
         "📈  CV — Scan Rate Study",
         "🔵  EIS — Impedance",
@@ -401,7 +422,10 @@ with st.sidebar:
         "📊  Calibration & LOD/LOQ",
         "➕  Standard Addition",
         "📄  Report",
-    ])
+    ]
+    _NAV_KEY = f"nav_radio_{_current_user}"
+    page = st.radio(f"navigate_{_current_user}", label_visibility="collapsed",
+                    options=_NAV_OPTIONS, key=_NAV_KEY)
 
     with st.expander("📋 CSV format guide"):
         st.markdown("""
@@ -445,16 +469,36 @@ def _input_mode(key):
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                       result_key: str = "interpretation"):
     """Renders the 🤖 Interpret button and shows/saves commentary."""
-    ak = st.session_state.api_key
-    if not ak:
-        st.info("🤖 Add your Claude API key in the sidebar to enable AI interpretation.")
+    _provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
+
+    # Resolve active key and model
+    if _provider == "ChatGPT (OpenAI)":
+        _active_key   = st.session_state.get("openai_api_key", "")
+        _active_model = st.session_state.get("gpt_model", "gpt-4o")
+        _provider_label = "ChatGPT"
+    elif _provider == "Gemini (Google)":
+        _active_key   = st.session_state.get("gemini_api_key", "")
+        _active_model = st.session_state.get("gemini_model", "gemini-2.0-flash")
+        _provider_label = "Gemini"
+    else:
+        _active_key   = st.session_state.get("api_key", "")
+        _active_model = st.session_state.get("ai_model", "claude-opus-5-5")
+        _provider_label = "Claude"
+
+    if not _active_key:
+        st.info(f"🤖 Add your {_provider_label} API key in the sidebar to enable AI interpretation.")
         return
-    if st.button("🤖 Generate AI Interpretation", use_container_width=True,
-                 key=f"ai_{module_key}"):
-        with st.spinner("Consulting the electrochemistry expert…"):
+
+    if st.button(f"🤖 Generate AI Interpretation ({_provider_label})",
+                 use_container_width=True, key=f"ai_{module_key}"):
+        with st.spinner(f"Consulting the electrochemistry expert via {_provider_label}…"):
             try:
-                _model = st.session_state.get("ai_model", "claude-opus-4-0")
-                text = interp_fn(api_key=ak, model=_model, **fn_kwargs)
+                if _provider == "ChatGPT (OpenAI)":
+                    text = _call_openai(_active_key, _active_model, interp_fn, fn_kwargs)
+                elif _provider == "Gemini (Google)":
+                    text = _call_gemini(_active_key, _active_model, interp_fn, fn_kwargs)
+                else:
+                    text = interp_fn(api_key=_active_key, model=_active_model, **fn_kwargs)
                 proj = _cur()
                 if module_key in proj.get("analyses", {}):
                     proj["analyses"][module_key]["interpretation"] = text
@@ -471,6 +515,75 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
         st.markdown('<div class="sec">Expert Interpretation</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="interp-box">{saved.replace(chr(10),"<br>")}</div>',
                     unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════
+# AI PROVIDER BRIDGES  (OpenAI · Gemini)
+# ═══════════════════════════════════════════════════════════
+def _call_openai(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
+    """Bridge: build the same user prompt via interp_fn dummy, then call OpenAI."""
+    try:
+        import openai as _oai
+    except ImportError:
+        return ("⚠️ 'openai' package not installed.\n"
+                "Add `openai>=1.0` to requirements.txt and redeploy.")
+    # Reuse the prompt by calling _build_prompt if available, else call with dummy key
+    # We call interp_fn with a placeholder key to get the prompt; we override the call
+    from ai_interpreter import _SYSTEM
+    # Build the user message by temporarily capturing what interp_fn would send
+    # Simpler: directly call interp_fn but patch _call to return the prompt
+    import ai_interpreter as _ai
+    _orig_call = _ai._call
+    _captured_prompt = {}
+    def _capture(ak, msg, mdl=""):
+        _captured_prompt["msg"] = msg
+        return "__captured__"
+    _ai._call = _capture
+    try:
+        result = interp_fn(api_key="__dummy__", model="__dummy__", **fn_kwargs)
+    finally:
+        _ai._call = _orig_call
+    if "__captured__" not in str(result) and result != "__captured__":
+        return result  # interp_fn short-circuited (no data)
+    user_msg = _captured_prompt.get("msg", "Interpret the electrochemical data provided.")
+    client = _oai.OpenAI(api_key=api_key)
+    resp = client.chat.completions.create(
+        model=model, max_tokens=1024,
+        messages=[{"role":"system","content":_SYSTEM},
+                  {"role":"user","content":user_msg}]
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def _call_gemini(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
+    """Bridge: build prompt via interp_fn, then call Google Gemini."""
+    try:
+        import google.generativeai as _genai
+    except ImportError:
+        return ("⚠️ 'google-generativeai' package not installed.\n"
+                "Add `google-generativeai>=0.5` to requirements.txt and redeploy.")
+    from ai_interpreter import _SYSTEM
+    import ai_interpreter as _ai
+    _orig_call = _ai._call
+    _captured_prompt = {}
+    def _capture(ak, msg, mdl=""):
+        _captured_prompt["msg"] = msg
+        return "__captured__"
+    _ai._call = _capture
+    try:
+        result = interp_fn(api_key="__dummy__", model="__dummy__", **fn_kwargs)
+    finally:
+        _ai._call = _orig_call
+    if "__captured__" not in str(result) and result != "__captured__":
+        return result
+    user_msg = _captured_prompt.get("msg", "Interpret the electrochemical data provided.")
+    _genai.configure(api_key=api_key)
+    _model = _genai.GenerativeModel(
+        model_name=model,
+        system_instruction=_SYSTEM
+    )
+    resp = _model.generate_content(user_msg)
+    return resp.text.strip()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -498,46 +611,86 @@ def _synth_eis(Rs, Rct, Q, n_cpe, f_min=0.01, f_max=1e5, n_pts=50):
 # ═══════════════════════════════════════════════════════════
 if page == "🏠  Home":
     proj = _cur()
+    _NAV_KEY = f"nav_radio_{_current_user}"
+
     st.title(f"⚗️ {proj.get('name','My Study')}")
-    st.caption(f"Created {proj.get('created','')}  |  SilverstoneLab Electrochemical Analysis Suite v3.0")
+    st.caption(f"Created {proj.get('created','')}  ·  SilverstoneLab Echem Suite  ·  Welcome, {_current_name}")
     if proj.get("notes"):
         st.info(proj["notes"])
 
+    # ── Completed analyses status bar ────────────────────────
     done = proj.get("analyses", {})
+    _labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
+               "cal":"📊 Cal","sa":"➕ SA"}
     if done:
-        st.markdown("### ✅ Analyses in this project")
-        labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
-                  "cal":"📊 Calibration","sa":"➕ Std Addition"}
-        cols = st.columns(min(len(done),5))
-        for i,(k,a) in enumerate(done.items()):
-            cols[i%5].metric(labels.get(k,k), a.get("timestamp","done"))
-        st.markdown("→ Go to **📄 Report** to generate your PDF + Word report.")
-    else:
-        st.markdown("""
-### Quick start
-1. Select a module in the left sidebar
-2. Upload a CSV **or** type your numbers directly
-3. Click **▶ Run** — results, plots and AI interpretation appear instantly
-4. When all analyses are done, go to **📄 Report** for a one-click PDF + Word export
-""")
+        st.success(f"✅ **{len(done)} analysis completed** in this project  ·  "
+                   + "  ".join(f"{_labels.get(k,k)} ✓" for k in done)
+                   + "  ·  Go to **📄 Report** to export")
+
     st.divider()
-    c1,c2 = st.columns(2)
-    c1.markdown("""
-| Module | Key outputs |
-|--------|-------------|
-| 📈 CV  | ECSA · b-value · k° · E½ |
-| 🔵 EIS | Rct · CPE · roughness |
-| 🧪 pH  | Ep/pH slope · Nernst · optimal pH |
-| 📊 Cal | LOD · LOQ · linear range · r |
-| ➕ SA  | C_sample · 95 % PI |
-""")
-    c2.markdown("""
-**New in v3.0**
-- 📁 **Project folders** — keep studies separate, switch anytime
-- 🤖 **AI interpretation** — Claude expert commentary per module
-- 📄 **Reports** — publication-ready PDF + Word with plots embedded
-- ✏️ **Manual entry** — type values directly, no CSV needed
-""")
+    st.markdown("#### Choose a module to begin")
+
+    # ── CSS for tile cards ───────────────────────────────────
+    st.markdown("""
+<style>
+.tile-card {
+    border: 2px solid #dce8f4;
+    border-radius: 14px;
+    padding: 20px 14px 14px 14px;
+    text-align: center;
+    background: linear-gradient(145deg, #f4f8ff, #e8f1fb);
+    margin-bottom: 6px;
+    min-height: 118px;
+}
+.tile-icon  { font-size: 2.4rem; line-height: 1; }
+.tile-title { font-size: 1.05rem; font-weight: 700; color: #1a3f6b; margin: 7px 0 3px; }
+.tile-desc  { font-size: 0.78rem; color: #5a7a9a; line-height: 1.35; }
+.tile-done  { border-color: #28a745; background: linear-gradient(145deg, #f0fff4, #e0f7e9); }
+</style>
+""", unsafe_allow_html=True)
+
+    _MODULES = [
+        ("📈", "CV Analysis",         "ECSA · b-value · k° · E½",          "📈  CV — Scan Rate Study",    "cv"),
+        ("🔵", "EIS Impedance",       "Rct · CPE · roughness factor",       "🔵  EIS — Impedance",         "eis"),
+        ("🧪", "pH Study",            "Ep/pH slope · Nernst · optimal pH",  "🧪  pH — Working pH",         "ph"),
+        ("📊", "Calibration",         "LOD · LOQ · linear range · r",       "📊  Calibration & LOD/LOQ",   "cal"),
+        ("➕", "Standard Addition",   "C_sample · recovery · 95 % PI",      "➕  Standard Addition",        "sa"),
+        ("📄", "Report",              "PDF + Word  ·  all plots embedded",   "📄  Report",                  None),
+    ]
+
+    # Row 1 — 3 modules
+    _cols1 = st.columns(3, gap="medium")
+    for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_MODULES[:3]):
+        _done_cls = " tile-done" if _key and _key in done else ""
+        _done_lbl = " ✓" if _key and _key in done else ""
+        with _cols1[_i]:
+            st.markdown(f"""
+<div class="tile-card{_done_cls}">
+  <div class="tile-icon">{_icon}</div>
+  <div class="tile-title">{_title}{_done_lbl}</div>
+  <div class="tile-desc">{_desc}</div>
+</div>""", unsafe_allow_html=True)
+            if st.button(f"Open {_title}", key=f"home_nav_{_i}", use_container_width=True):
+                st.session_state[_NAV_KEY] = _nav
+                st.rerun()
+
+    st.write("")  # spacer
+
+    # Row 2 — 3 modules
+    _cols2 = st.columns(3, gap="medium")
+    for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_MODULES[3:]):
+        _done_cls = " tile-done" if _key and _key in done else ""
+        _done_lbl = " ✓" if _key and _key in done else ""
+        with _cols2[_i]:
+            st.markdown(f"""
+<div class="tile-card{_done_cls}">
+  <div class="tile-icon">{_icon}</div>
+  <div class="tile-title">{_title}{_done_lbl}</div>
+  <div class="tile-desc">{_desc}</div>
+</div>""", unsafe_allow_html=True)
+            if st.button(f"Open {_title}", key=f"home_nav_{_i+3}", use_container_width=True):
+                st.session_state[_NAV_KEY] = _nav
+                st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════
