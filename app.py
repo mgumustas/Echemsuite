@@ -2447,6 +2447,7 @@ elif page == "🧬  Selectivity":
             st.warning(f"⚠️ Interferents outside criterion: {', '.join(_fail_list)}")
 
         import matplotlib.pyplot as plt
+        import io as _io_sel
         _fig_sel, _ax_sel = plt.subplots(figsize=(max(6, len(_sr)*0.9), 4))
         _names   = [r["Interferent"] for r in _sr]
         _deltas  = [r["% Signal Change"] for r in _sr]
@@ -2461,6 +2462,10 @@ elif page == "🧬  Selectivity":
         plt.xticks(rotation=35, ha="right", fontsize=8)
         _ax_sel.legend(fontsize=8)
         plt.tight_layout()
+        # Save 300 DPI bytes for report
+        _sel_buf = _io_sel.BytesIO()
+        _fig_sel.savefig(_sel_buf, format="png", dpi=300, bbox_inches="tight")
+        st.session_state["sel_plot_bytes"] = [_sel_buf.getvalue()]
         st.pyplot(_fig_sel)
         plt.close(_fig_sel)
 
@@ -2556,6 +2561,7 @@ elif page == "📅  Stability":
             st.warning(f"⚠️ Day {_sr2[-1]['Day']}: % recovery = {_last_rec:.1f}% — criterion not met (<{_thresh2:.0f}%)")
 
         import matplotlib.pyplot as plt
+        import io as _io_stab
         _fig_stab, _ax_stab = plt.subplots(figsize=(8, 4))
         _days_arr = [r["Day"] for r in _sr2]
         _rec_arr  = [r["% Recovery"] for r in _sr2]
@@ -2570,6 +2576,10 @@ elif page == "📅  Stability":
         _ax_stab.set_ylim(max(0, min(_rec_arr) - 10), 105)
         _ax_stab.legend(fontsize=9)
         plt.tight_layout()
+        # Save 300 DPI bytes for report
+        _stab_buf = _io_stab.BytesIO()
+        _fig_stab.savefig(_stab_buf, format="png", dpi=300, bbox_inches="tight")
+        st.session_state["stab_plot_bytes"] = [_stab_buf.getvalue()]
         st.pyplot(_fig_stab)
         plt.close(_fig_stab)
 
@@ -2922,22 +2932,118 @@ elif page == "📄  Report":
     st.divider()
     st.markdown('<div class="sec">Generate Report</div>', unsafe_allow_html=True)
 
-    col1,col2 = st.columns(2)
-    gen_pdf  = col1.checkbox("PDF (.pdf)",  value=True)
-    gen_docx = col2.checkbox("Word (.docx)",value=True)
+    # ── Report type selector ──────────────────────────────────
+    _rtype = st.radio(
+        "Report type",
+        ["📋  Summary", "📄  Detailed"],
+        horizontal=True,
+        key="report_type_radio",
+        help=(
+            "**Summary** — title page · executive summary · key metrics table · "
+            "AI interpretation for each module. No figures. ~2–3 pages.  \n"
+            "**Detailed** — everything in Summary plus embedded figures, raw data "
+            "tables, EIS fit parameters, ICH Q2 precision breakdown. Full publication output."
+        ),
+    )
+    _report_type_val = "summary" if _rtype.startswith("📋") else "detailed"
+
+    # explain contents
+    if _report_type_val == "summary":
+        st.caption("📋 Summary includes: title · executive summary · metrics tables · AI interpretation. No figures.")
+    else:
+        st.caption("📄 Detailed includes: all Summary content + all embedded figures + raw data tables + EIS fit params.")
+
+    col1, col2 = st.columns(2)
+    gen_pdf  = col1.checkbox("PDF (.pdf)",   value=True)
+    gen_docx = col2.checkbox("Word (.docx)", value=True)
 
     if st.button("📄 Generate Report", type="primary", use_container_width=True):
         if not gen_pdf and not gen_docx:
             st.warning("Select at least one format.")
         else:
             with st.spinner("Building report…"):
-                tmpdir = tempfile.mkdtemp()
+                # ── Collect new-module session-state results into project ──
+                import copy
+                _proj_for_report = copy.deepcopy(proj)
+                _proj_for_report.setdefault("analyses", {})
+
+                # Selectivity
+                if "sel_results" in st.session_state and st.session_state["sel_results"]:
+                    _sr = st.session_state["sel_results"]
+                    _pass_pct = sum(1 for r in _sr if r.get("Status","") == "✅") / len(_sr) * 100 if _sr else 0
+                    _proj_for_report["analyses"]["sel"] = {
+                        "metrics": {
+                            "Analyte":          st.session_state.get("sel_analyte","—"),
+                            "Interferents tested": len(_sr),
+                            "Pass rate":        f"{_pass_pct:.0f}%",
+                            "Threshold":        f"±{st.session_state.get('sel_thresh',5):.0f}%",
+                        },
+                        "rows":        _sr,
+                        "plot_bytes":  st.session_state.get("sel_plot_bytes", []),
+                        "interpretation": st.session_state.get("sel_interp",""),
+                    }
+
+                # Stability
+                if "stab_results" in st.session_state and st.session_state["stab_results"]:
+                    _stbr = st.session_state["stab_results"]
+                    _last_rec = _stbr[-1].get("% Recovery", 0) if _stbr else 0
+                    _proj_for_report["analyses"]["stab"] = {
+                        "metrics": {
+                            "Analyte":          st.session_state.get("stab_analyte","—"),
+                            "Days monitored":   len(_stbr),
+                            "Min. threshold":   f"{st.session_state.get('stab_thresh',90):.0f}%",
+                            "Final recovery":   f"{_last_rec:.1f}%",
+                            "Final status":     _stbr[-1].get("Status","—") if _stbr else "—",
+                        },
+                        "rows":        _stbr,
+                        "plot_bytes":  st.session_state.get("stab_plot_bytes", []),
+                        "interpretation": st.session_state.get("stab_interp",""),
+                    }
+
+                # Surface Characterization
+                _surf_metrics = {}
+                _rct_b = st.session_state.get("rct_bare", 0.0)
+                _rct_m = st.session_state.get("rct_mod",  0.0)
+                if _rct_b > 0 and _rct_m > 0:
+                    _surf_metrics["Rct Bare (Ω)"]    = round(_rct_b, 2)
+                    _surf_metrics["Rct Modified (Ω)"] = round(_rct_m, 2)
+                    _surf_metrics["Rct Ratio (Bare/Mod)"] = round(_rct_b / _rct_m, 2)
+                _ipa_b = st.session_state.get("surf_ipa_bare", 0.0)
+                _ipa_m = st.session_state.get("surf_ipa_mod",  0.0)
+                if _ipa_b > 0 and _ipa_m > 0:
+                    _surf_metrics["Ipa Bare (µA)"]    = round(_ipa_b, 3)
+                    _surf_metrics["Ipa Modified (µA)"] = round(_ipa_m, 3)
+                    _surf_metrics["Signal Enhancement"] = f"{(_ipa_m-_ipa_b)/_ipa_b*100:+.1f}%"
+                _sem_note_val = st.session_state.get("sem_note","")
+                if _sem_note_val:
+                    _surf_metrics["SEM observation"] = _sem_note_val
+                if _surf_metrics:
+                    _proj_for_report["analyses"]["surf"] = {
+                        "metrics": _surf_metrics,
+                        "plot_bytes": st.session_state.get("surf_plot_bytes", []),
+                        "interpretation": st.session_state.get("surf_interp",""),
+                    }
+
+                # ── Stable per-project output directory; purge old reports before regen ──
+                import glob as _glob
+                _proj_id   = re.sub(r"[^\w\-]", "_", proj.get("name", "project"))[:40]
+                _report_dir = os.path.join(tempfile.gettempdir(), "silverstonelab", _proj_id)
+                os.makedirs(_report_dir, exist_ok=True)
+                # Delete any previously generated PDF/DOCX for this project
+                for _old in _glob.glob(os.path.join(_report_dir, "*.pdf")) + \
+                             _glob.glob(os.path.join(_report_dir, "*.docx")):
+                    try:
+                        os.remove(_old)
+                    except OSError:
+                        pass
+
                 try:
-                    paths = generate_reports(proj, tmpdir)
+                    paths = generate_reports(_proj_for_report, _report_dir,
+                                             report_type=_report_type_val)
                     st.success("✅ Report ready!")
                     if gen_pdf and "pdf" in paths:
                         with open(paths["pdf"],"rb") as f:
-                            st.download_button("⬇ Download PDF",f.read(),
+                            st.download_button("⬇ Download PDF", f.read(),
                                                Path(paths["pdf"]).name,
                                                "application/pdf",
                                                use_container_width=True)
@@ -2947,7 +3053,7 @@ elif page == "📄  Report":
                     if gen_docx and "docx" in paths:
                         with open(paths["docx"],"rb") as f:
                             st.download_button(
-                                "⬇ Download Word (.docx)",f.read(),
+                                "⬇ Download Word (.docx)", f.read(),
                                 Path(paths["docx"]).name,
                                 "application/vnd.openxmlformats-officedocument"
                                 ".wordprocessingml.document",
@@ -2960,6 +3066,9 @@ elif page == "📄  Report":
                     import traceback; st.code(traceback.format_exc())
 
     st.divider()
-    st.caption("Reports embed all plots, metric tables, and AI interpretations "
-               "in a publication-ready layout. ©SilverstoneLab watermark is "
-               "included on every page.")
+    st.caption(
+        "**Summary** reports are ideal for quick sharing and lab notebooks. "
+        "**Detailed** reports are publication-ready with all figures and raw data embedded. "
+        "File names include `_summary` or `_detailed` to distinguish them. "
+        "©SilverstoneLab watermark is included on every page."
+    )
