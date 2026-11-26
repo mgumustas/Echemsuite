@@ -561,7 +561,8 @@ def _input_mode(key):
                     horizontal=True, key=key)
 
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
-                      result_key: str = "interpretation"):
+                      result_key: str = "interpretation",
+                      btn_key: str = None):
     """Renders the 🤖 Interpret button and shows/saves commentary."""
     _provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
 
@@ -583,8 +584,9 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
         st.info(f"🤖 Add your {_provider_label} API key in the sidebar to enable AI interpretation.")
         return
 
+    _btn_key = btn_key if btn_key else f"ai_{module_key}"
     if st.button(f"🤖 Generate AI Interpretation ({_provider_label})",
-                 use_container_width=True, key=f"ai_{module_key}"):
+                 use_container_width=True, key=_btn_key):
         with st.spinner(f"Consulting the electrochemistry expert via {_provider_label}…"):
             try:
                 if _provider == "ChatGPT (OpenAI)":
@@ -1694,7 +1696,8 @@ elif page == "📊  Calibration & LOD/LOQ":
                     "language":          st.session_state.get("bulk_rep_lang","English"),
                 }
                 _ai_interpret_btn("cal", interpret_calibration, _ai_kwargs_bulk,
-                                  result_key="bulk_ai_text")
+                                  result_key="bulk_ai_text",
+                                  btn_key="ai_cal_bulk")
 
     left,right = st.columns([1,1])
     with left:
@@ -2258,14 +2261,16 @@ elif page == "📊  Calibration & LOD/LOQ":
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"calibration.zip")
                 _ai_interpret_btn("cal",interpret_calibration,
-                                   {"results":res,"analyte":analyte,"unit":conc_unit})
+                                   {"results":res,"analyte":analyte,"unit":conc_unit},
+                                   btn_key="ai_cal_run")
             except Exception as e:
                 st.error(str(e))
                 import traceback; st.code(traceback.format_exc())
     elif _cur().get("analyses",{}).get("cal"):
         a=_cur()["analyses"]["cal"]
         st.info(f"Previous calibration from {a.get('timestamp','')} stored.")
-        _ai_interpret_btn("cal",interpret_calibration,{"results":{},"analyte":analyte,"unit":conc_unit})
+        _ai_interpret_btn("cal",interpret_calibration,{"results":{},"analyte":analyte,"unit":conc_unit},
+                          btn_key="ai_cal_prev")
 
 
 # ═══════════════════════════════════════════════════════════
