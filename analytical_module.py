@@ -460,6 +460,200 @@ def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
     return {'C_sample_uM': C_sample, 'slope': slope, 'R2': r_sq}
 
 # ══════════════════════════════════════════════════════════════
+# 5b. ICH Q2(R2) KESİNLİK VALİDASYONU
+# ══════════════════════════════════════════════════════════════
+
+def ich_q2_precision_validation(intraday_data, interday_data=None,
+                                 analyte_name='Analyte', unit='μM',
+                                 output_dir='.', plot_style=None):
+    """
+    ICH Q2(R2) Kesinlik Validasyonu.
+
+    Tekrar Edilebilirlik (Repeatability / Gün İçi):
+        • Aynı gün, en az 3 tekrar, en az 3 konsantrasyon seviyesi (LOQ, %50, %100)
+        • Kabul kriteri: %RSD ≤ %2
+
+    Ara Kesinlik (Intermediate Precision / Günler Arası):
+        • En az 3 farklı gün, her gün en az 3 tekrar
+        • Kabul kriteri: %RSD ≤ %5
+
+    Parameters
+    ----------
+    intraday_data : dict
+        {etiket: [ip_uA_tekrar1, ip_uA_tekrar2, ...]}
+        Örnek: {'Düşük (0.1 µM)': [1.52, 1.54, 1.51], 'Orta (1.0 µM)': [...]}
+    interday_data : dict veya None
+        {'Gün 1': [ip1, ip2, ip3], 'Gün 2': [...], ...}
+        Günlük ortalamalar üzerinden toplam %RSD hesaplanır.
+    analyte_name : str
+    unit : str
+    output_dir : str
+    plot_style : dict
+
+    Returns
+    -------
+    dict: intraday_results, interday_results, pass_fail
+    """
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+
+    INTRA_LIMIT = 2.0   # ICH Q2(R2) repeatability
+    INTER_LIMIT = 5.0   # ICH Q2(R2) intermediate precision
+
+    print(f"\n{'█'*55}")
+    print(f"  ICH Q2(R2) KESİNLİK VALİDASYONU — {analyte_name}")
+    print(f"{'█'*55}")
+
+    # ── 1. Tekrar Edilebilirlik (Gün İçi) ──────────────────
+    intraday_results = {}
+    print(f"\n{'─'*55}")
+    print("TEKRAR EDİLEBİLİRLİK (GÜN İÇİ / REPEATABILITY)")
+    print(f"Kabul Kriteri: %RSD ≤ {INTRA_LIMIT}%")
+    print(f"{'─'*55}")
+    print(f"{'Seviye':<25} {'Ortalama (μA)':>14} {'SD (μA)':>10} {'%RSD':>8} {'Durum':>8}")
+    print("-"*55)
+
+    for label, vals in intraday_data.items():
+        arr  = np.array(vals, dtype=float)
+        mean = arr.mean()
+        std  = arr.std(ddof=1) if len(arr) > 1 else 0.0
+        rsd  = (std / mean) * 100 if mean != 0 else 0.0
+        passed = rsd <= INTRA_LIMIT
+        status = "✓ Geçti" if passed else "✗ Başarısız"
+        print(f"{label:<25} {mean:>14.4f} {std:>10.4f} {rsd:>8.2f} {status:>8}")
+        intraday_results[label] = {
+            'values': arr.tolist(), 'mean': mean, 'std': std,
+            'rsd': rsd, 'n': len(arr), 'pass': passed
+        }
+
+    # ── 2. Günler Arası (Ara Kesinlik) ─────────────────────
+    interday_results = {}
+    if interday_data:
+        print(f"\n{'─'*55}")
+        print("ARA KESİNLİK (GÜNLER ARASI / INTERMEDIATE PRECISION)")
+        print(f"Kabul Kriteri: %RSD ≤ {INTER_LIMIT}%")
+        print(f"{'─'*55}")
+        print(f"{'Gün':<20} {'Ortalama (μA)':>14} {'SD (μA)':>10} {'%RSD':>8}")
+        print("-"*55)
+
+        day_means = []
+        for day, vals in interday_data.items():
+            arr  = np.array(vals, dtype=float)
+            mean = arr.mean()
+            std  = arr.std(ddof=1) if len(arr) > 1 else 0.0
+            rsd  = (std / mean) * 100 if mean != 0 else 0.0
+            print(f"{day:<20} {mean:>14.4f} {std:>10.4f} {rsd:>8.2f}")
+            day_means.append(mean)
+            interday_results[day] = {'mean': mean, 'std': std, 'rsd': rsd, 'n': len(arr)}
+
+        # Günler arası toplam %RSD (gün ortalamalarından)
+        all_means = np.array(day_means)
+        total_inter_rsd = (all_means.std(ddof=1) / all_means.mean()) * 100
+        inter_passed = total_inter_rsd <= INTER_LIMIT
+        inter_status = "✓ Geçti" if inter_passed else "✗ Başarısız"
+        print(f"{'─'*55}")
+        print(f"Günler arası toplam %RSD = {total_inter_rsd:.2f}%  →  {inter_status}")
+        interday_results['_total_rsd'] = total_inter_rsd
+        interday_results['_pass'] = inter_passed
+
+    # ── 3. Grafik ──────────────────────────────────────────
+    n_panels = 2 if interday_data else 1
+    fig, axes = plt.subplots(1, n_panels, figsize=(6 * n_panels, 5))
+    if n_panels == 1:
+        axes = [axes]
+
+    # Sol: Gün içi RSD bar
+    ax1 = axes[0]
+    labels_i = list(intraday_data.keys())
+    rsds_i   = [intraday_results[l]['rsd'] for l in labels_i]
+    colors_i = [_colors[0] if intraday_results[l]['pass'] else '#e74c3c' for l in labels_i]
+    bars = ax1.bar(range(len(labels_i)), rsds_i, color=colors_i, alpha=0.8, edgecolor='black', linewidth=0.8)
+    ax1.axhline(INTRA_LIMIT, color='red', linewidth=_lw, linestyle='--',
+                label=f'ICH limit ({INTRA_LIMIT}%)')
+    ax1.set_xticks(range(len(labels_i)))
+    ax1.set_xticklabels(labels_i, rotation=25, ha='right', fontsize=10)
+    ax1.set_ylabel('%RSD')
+    ax1.set_title(f'Tekrar Edilebilirlik (Gün İçi)\n{analyte_name}', fontweight='bold')
+    ax1.legend()
+    ax1.set_ylim(0, max(max(rsds_i, default=0) * 1.4, INTRA_LIMIT * 1.5))
+    for bar, rsd in zip(bars, rsds_i):
+        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
+                 f'{rsd:.2f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    # Sağ: Günler arası RSD bar (eğer veri varsa)
+    if interday_data:
+        ax2 = axes[1]
+        days_list = [k for k in interday_data.keys()]
+        rsds_inter = [interday_results[d]['rsd'] for d in days_list]
+        col_inter = '#27ae60' if interday_results['_pass'] else '#e74c3c'
+        bars2 = ax2.bar(range(len(days_list)), rsds_inter,
+                        color=_colors[2 % len(_colors)], alpha=0.8, edgecolor='black', linewidth=0.8)
+        ax2.axhline(INTER_LIMIT, color='red', linewidth=_lw, linestyle='--',
+                    label=f'ICH limit ({INTER_LIMIT}%)')
+        # Toplam inter-day çizgisi
+        total_inter = interday_results['_total_rsd']
+        ax2.axhline(total_inter, color=col_inter, linewidth=1.5, linestyle=':',
+                    label=f'Toplam %RSD: {total_inter:.2f}%')
+        ax2.set_xticks(range(len(days_list)))
+        ax2.set_xticklabels(days_list, rotation=25, ha='right', fontsize=10)
+        ax2.set_ylabel('%RSD (gün içi)')
+        ax2.set_title(f'Ara Kesinlik (Günler Arası)\n{analyte_name}', fontweight='bold')
+        ax2.legend(fontsize=8)
+        ax2.set_ylim(0, max(max(rsds_inter, default=0) * 1.4, INTER_LIMIT * 1.5))
+        for bar, rsd in zip(bars2, rsds_inter):
+            ax2.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
+                     f'{rsd:.2f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
+
+    plt.tight_layout()
+    _add_watermark(fig)
+    out_path = os.path.join(output_dir, 'ich_q2_precision.png')
+    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"\n  Grafik: {out_path}")
+
+    # Özet tablosu CSV
+    rows_csv = []
+    for label, r in intraday_results.items():
+        rows_csv.append({
+            'Tip': 'Gün İçi', 'Grup': label,
+            'n': r['n'], 'Ortalama (μA)': round(r['mean'], 4),
+            'SD (μA)': round(r['std'], 4), '%RSD': round(r['rsd'], 2),
+            'ICH Limiti (%)': INTRA_LIMIT, 'Durum': 'Geçti' if r['pass'] else 'Başarısız'
+        })
+    if interday_data:
+        for day, r in interday_results.items():
+            if day.startswith('_'):
+                continue
+            rows_csv.append({
+                'Tip': 'Günler Arası', 'Grup': day,
+                'n': r['n'], 'Ortalama (μA)': round(r['mean'], 4),
+                'SD (μA)': round(r['std'], 4), '%RSD': round(r['rsd'], 2),
+                'ICH Limiti (%)': INTER_LIMIT,
+                'Durum': 'Geçti' if r['rsd'] <= INTER_LIMIT else 'Başarısız'
+            })
+    df_out = pd.DataFrame(rows_csv)
+    csv_path = os.path.join(output_dir, 'ich_q2_precision.csv')
+    df_out.to_csv(csv_path, index=False)
+
+    # Pass/fail özet
+    intra_rsds = [v['rsd'] for v in intraday_results.values()]
+    overall_intra_pass = all(v['pass'] for v in intraday_results.values())
+    overall_inter_pass = interday_results.get('_pass', True) if interday_data else None
+
+    return {
+        'intraday': intraday_results,
+        'interday': interday_results,
+        'overall_intra_pass': overall_intra_pass,
+        'overall_inter_pass': overall_inter_pass,
+        'intra_max_rsd': max(intra_rsds) if intra_rsds else 0.0,
+        'inter_total_rsd': interday_results.get('_total_rsd', None) if interday_data else None,
+        'plot_path': out_path,
+        'csv_path': csv_path
+    }
+
+
+# ══════════════════════════════════════════════════════════════
 # 6. KOMPLE ANALİTİK PERFORMANS
 # ══════════════════════════════════════════════════════════════
 
