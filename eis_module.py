@@ -202,29 +202,37 @@ def fit_eis(df, label='Electrode', output_dir='.', p0=None):
 # 3. NYQUIST VE BODE GRAFİKLERİ
 # ══════════════════════════════════════════════════════════════
 
-def plot_nyquist_comparison(fit_results, output_dir='.', filename='eis_nyquist.png'):
+def plot_nyquist_comparison(fit_results, output_dir='.', filename='eis_nyquist.png',
+                            plot_style=None):
     """
     Birden fazla elektrot/adım için Nyquist karşılaştırması.
 
     Parameters
     ----------
     fit_results : list of dict (fit_eis() çıktıları)
+    plot_style  : dict, optional — colors, linewidth, fit_linestyle, marker_size
     """
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 40)
+
     fig, ax = plt.subplots(figsize=(8, 7))
 
     for i, res in enumerate(fit_results):
         if res is None:
             continue
         df  = res['df']
-        color = COLORS[i % len(COLORS)]
+        color = _colors[i % len(_colors)]
 
         # Deneysel
         ax.scatter(df['Zr'], df['Zi_pos'],
-                   color=color, s=40, label=f"{res['label']} (exp)", zorder=4)
+                   color=color, s=_ms, label=f"{res['label']} (exp)", zorder=4)
         # Fit
         Z_fit = res['Z_fit']
         ax.plot(Z_fit.real, -Z_fit.imag,
-                color=color, linewidth=2, linestyle='--',
+                color=color, linewidth=_lw, linestyle=_ls,
                 label=f"{res['label']} (fit)")
 
     ax.set_xlabel("Z$_{real}$ (Ω)")
@@ -239,11 +247,17 @@ def plot_nyquist_comparison(fit_results, output_dir='.', filename='eis_nyquist.p
     plt.close()
     print(f"  Nyquist grafiği: {out_path}")
 
-def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
+def plot_bode(fit_results, output_dir='.', filename='eis_bode.png', plot_style=None):
     """
     Bode grafikleri: |Z| vs frekans ve faz açısı vs frekans.
     Her elektrota/adıma ait deneysel ve fit eğrileri.
     """
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms_bode = max(10, int(_ps.get('marker_size', 40) * 0.5))  # Bode uses smaller markers
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     ax_mag, ax_phase = axes
 
@@ -251,7 +265,7 @@ def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
         if res is None:
             continue
         df    = res['df']
-        color = COLORS[i % len(COLORS)]
+        color = _colors[i % len(_colors)]
         freq  = df['freq'].values
         Zr    = df['Zr'].values
         Zi    = -df['Zi_pos'].values   # original sign for phase
@@ -261,9 +275,9 @@ def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
         # Phase (degrees)
         phase_exp   = np.degrees(np.arctan2(Zi, Zr))
 
-        ax_mag.scatter(freq, Z_mag_exp, color=color, s=20,
+        ax_mag.scatter(freq, Z_mag_exp, color=color, s=_ms_bode,
                        label=f"{res['label']} (exp)", zorder=4)
-        ax_phase.scatter(freq, phase_exp, color=color, s=20,
+        ax_phase.scatter(freq, phase_exp, color=color, s=_ms_bode,
                          label=f"{res['label']} (exp)", zorder=4)
 
         # Fit eğrisi
@@ -273,10 +287,10 @@ def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
         Z_mag_fit  = np.abs(Z_fit)
         phase_fit  = np.degrees(np.angle(Z_fit))
 
-        ax_mag.plot(freq_fit, Z_mag_fit, color=color, linewidth=2,
-                    linestyle='--', label=f"{res['label']} (fit)")
-        ax_phase.plot(freq_fit, phase_fit, color=color, linewidth=2,
-                      linestyle='--')
+        ax_mag.plot(freq_fit, Z_mag_fit, color=color, linewidth=_lw,
+                    linestyle=_ls, label=f"{res['label']} (fit)")
+        ax_phase.plot(freq_fit, phase_fit, color=color, linewidth=_lw,
+                      linestyle=_ls)
 
     for ax in [ax_mag, ax_phase]:
         ax.set_xscale('log')
@@ -299,13 +313,16 @@ def plot_bode(fit_results, output_dir='.', filename='eis_bode.png'):
     print(f"  Bode grafiği: {out_path}")
 
 
-def plot_rct_comparison(fit_results, output_dir='.'):
+def plot_rct_comparison(fit_results, output_dir='.', plot_style=None):
     """Rct değerlerini modifikasyon adımlarına göre çubuk grafik."""
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+
     labels = [r['label'] for r in fit_results if r is not None]
     rcts   = [r['Rct']   for r in fit_results if r is not None]
 
     fig, ax = plt.subplots(figsize=(max(6, len(labels)*1.5), 5))
-    bars = ax.bar(labels, rcts, color=COLORS[:len(labels)],
+    bars = ax.bar(labels, rcts, color=_colors[:len(labels)],
                   edgecolor='black', linewidth=0.8)
 
     for bar, val in zip(bars, rcts):
@@ -326,7 +343,7 @@ def plot_rct_comparison(fit_results, output_dir='.'):
 # 4. KOMPLE EIS ANALİZİ
 # ══════════════════════════════════════════════════════════════
 
-def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1):
+def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1, plot_style=None):
     """
     Birden fazla elektrot/adım için tam EIS analizi.
 
@@ -373,13 +390,13 @@ def run_eis_analysis(file_dict, output_dir='results_eis', sign_zimag=-1):
         return None
 
     # Nyquist karşılaştırma grafiği
-    plot_nyquist_comparison(fit_results, output_dir=output_dir)
+    plot_nyquist_comparison(fit_results, output_dir=output_dir, plot_style=plot_style)
 
     # Bode grafikleri (EIS yayınlarında standart)
-    plot_bode(fit_results, output_dir=output_dir)
+    plot_bode(fit_results, output_dir=output_dir, plot_style=plot_style)
 
     # Rct karşılaştırma
-    plot_rct_comparison(fit_results, output_dir=output_dir)
+    plot_rct_comparison(fit_results, output_dir=output_dir, plot_style=plot_style)
 
     # Parametre tablosu
     rows = []
