@@ -30,7 +30,7 @@ Rules:
 # ─────────────────────────────────────────────────────────────
 # INTERNAL HELPER
 # ─────────────────────────────────────────────────────────────
-def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
+def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
     """Call Claude via the Anthropic SDK; returns plain text."""
     try:
         import anthropic
@@ -39,11 +39,10 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
 
     _FALLBACK_MODELS = [
         model,
-        "claude-opus-4-0",
-        "claude-sonnet-4-5",
+        "claude-opus-5-5",
         "claude-sonnet-4-6",
+        "claude-sonnet-4-5",
         "claude-3-5-sonnet-20241022",
-        "claude-3-opus-20240229",
     ]
 
     # Let the SDK manage its own http client (avoids httpx vs httpx2 version conflicts)
@@ -76,7 +75,7 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-4-0") -> str:
 # MODULE-SPECIFIC INTERPRETERS
 # ─────────────────────────────────────────────────────────────
 
-def interpret_cv(api_key: str, results: dict, electrode_name: str = "electrode", model: str = "claude-opus-4-0") -> str:
+def interpret_cv(api_key: str, results: dict, electrode_name: str = "electrode", model: str = "claude-opus-5-5") -> str:
     ecsa   = results.get("ecsa", {})
     mech   = results.get("mechanism", {})
     k0     = results.get("k0", {})
@@ -104,7 +103,7 @@ Discuss:
     return _call(api_key, prompt, model)
 
 
-def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = None, model: str = "claude-opus-4-0") -> str:
+def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = None, model: str = "claude-opus-5-5") -> str:
     if param_df is None or (hasattr(param_df, 'empty') and param_df.empty):
         return "No EIS fit parameters available for interpretation."
 
@@ -149,7 +148,7 @@ Quote every numeric value. Use correct SI notation. Do NOT use bullet points."""
     return _call(api_key, prompt, model)
 
 
-def interpret_ph(api_key: str, results: dict, analyte: str = "analyte", model: str = "claude-opus-4-0") -> str:
+def interpret_ph(api_key: str, results: dict, analyte: str = "analyte", model: str = "claude-opus-5-5") -> str:
     slope    = results.get("slope_mV_per_pH", "N/A")
     r2       = results.get("R2",              "N/A")
     mn       = results.get("ratio_m_n",       "N/A")
@@ -174,7 +173,7 @@ Discuss:
 
 
 def interpret_calibration(api_key: str, results: dict,
-                           analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-4-0") -> str:
+                           analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-5-5") -> str:
     cr       = results.get("calibration", results)
     lod      = cr.get("LOD",        "N/A")
     loq      = cr.get("LOQ",        "N/A")
@@ -206,7 +205,7 @@ Discuss:
 
 
 def interpret_standard_addition(api_key: str, results: dict,
-                                 analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-4-0") -> str:
+                                 analyte: str = "analyte", unit: str = "µM", model: str = "claude-opus-5-5") -> str:
     c_samp = results.get("C_sample_uM", "N/A")
     r2     = results.get("R2",          "N/A")
     slope  = results.get("slope",       "N/A")
@@ -229,7 +228,7 @@ Discuss:
     return _call(api_key, prompt, model)
 
 
-def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-4-0") -> str:
+def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-5-5") -> str:
     """Generate an executive summary for the whole project."""
     analyses = project.get("analyses", {})
     if not analyses:
