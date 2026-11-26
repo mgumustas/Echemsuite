@@ -51,18 +51,24 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
     last_err = None
     for _m in _FALLBACK_MODELS:
         try:
-            msg = client.messages.create(
+            # Build kwargs — disable extended thinking if model supports it
+            _kwargs: dict = dict(
                 model      = _m,
-                max_tokens = 800,
+                max_tokens = 2048,
                 system     = _SYSTEM,
                 messages   = [{"role": "user", "content": user_msg}],
             )
-            # opus-5-5 may return ThinkingBlocks before TextBlocks
-            # Iterate and return the first string .text we find
+            # Disable thinking for opus-5+ to avoid ThinkingBlock-only responses
+            if "opus-5" in _m or "opus5" in _m:
+                _kwargs["thinking"] = {"type": "disabled"}
+
+            msg = client.messages.create(**_kwargs)
+
+            # Iterate blocks — TextBlock has .text str, ThinkingBlock does not
             for block in msg.content:
                 try:
                     t = block.text
-                    if isinstance(t, str):
+                    if isinstance(t, str) and t.strip():
                         return t.strip()
                 except AttributeError:
                     continue
