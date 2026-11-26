@@ -592,7 +592,9 @@ def generate_reports(project: dict, out_dir: str,
     report_type: 'summary' | 'detailed'
     """
     os.makedirs(out_dir, exist_ok=True)
-    stem   = project.get("name","report").replace(" ","_").replace("/","_")[:50]
+    _date_str = datetime.date.today().strftime("%Y%m%d")
+    stem   = project.get("name","report").replace(" ","_").replace("/","_")[:40]
+    stem   = f"{stem}_{_date_str}"
     suffix = "_summary" if report_type == "summary" else "_detailed"
     paths  = {}
     try:
