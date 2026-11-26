@@ -1190,24 +1190,22 @@ elif page == "📊  Calibration & LOD/LOQ":
             st.info("Aynı günde, farklı konsantrasyon seviyelerinde yapılan tekrar ölçümler. "
                     "ICH Q2(R2): en az 3 seviye (düşük/orta/yüksek), her seviyede ≥3 tekrar.")
 
-            ich_intra_mode = st.radio("Veri girişi", ["✏️ Manuel giriş", "📁 CSV yükle (repeatability.csv)"],
+            ich_intra_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
                                        horizontal=True, key="ich_intra_mode")
 
-            intra_rows = []  # (etiket, [değerler]) listesi
+            intra_rows = []  # (etiket, list[float])
 
-            if ich_intra_mode == "📁 CSV yükle (repeatability.csv)":
-                st.caption("Beklenen sütunlar: **Seviye**, **ip(uA)** — satırlar her tekrarı temsil eder.")
+            if ich_intra_mode == "📁 CSV yükle":
+                st.caption("Beklenen sütunlar: **Seviye**, **ip(uA)** — her satır bir tekrar.")
                 ich_intra_up = st.file_uploader("Repeatability CSV", type="csv", key="ich_intra_up")
                 if ich_intra_up:
                     try:
                         df_intra = pd.read_csv(ich_intra_up)
                         df_intra.columns = [c.strip() for c in df_intra.columns]
-                        # Seviye / etiket sütununu bul
-                        lbl_col  = next((c for c in df_intra.columns if any(k in c.lower()
-                                         for k in ('seviye','level','label','grup'))), df_intra.columns[0])
-                        # ip sütununu bul
-                        ip_col   = next((c for c in df_intra.columns if any(k in c.lower()
-                                         for k in ('ip','current','i(','akım'))), None)
+                        lbl_col = next((c for c in df_intra.columns if any(k in c.lower()
+                                        for k in ('seviye','level','label','grup'))), df_intra.columns[0])
+                        ip_col  = next((c for c in df_intra.columns if any(k in c.lower()
+                                        for k in ('ip','current','i(','akım'))), None)
                         if ip_col is None:
                             st.error("CSV'de 'ip' sütunu bulunamadı.")
                         else:
@@ -1215,35 +1213,51 @@ elif page == "📊  Calibration & LOD/LOQ":
                                 vals = grp[ip_col].dropna().astype(float).tolist()
                                 if vals:
                                     intra_rows.append((str(lbl), vals))
-                            st.success(f"✓ {len(intra_rows)} seviye yüklendi: {[r[0] for r in intra_rows]}")
+                            st.success(f"✓ {len(intra_rows)} seviye yüklendi")
                             st.dataframe(df_intra, use_container_width=True, hide_index=True)
                     except Exception as e:
                         st.error(f"CSV okunamadı: {e}")
             else:
-                n_intra_levels = st.number_input("Konsantrasyon seviye sayısı", 1, 6, 3,
-                                                  key="ich_n_intra", step=1)
-                for i in range(int(n_intra_levels)):
-                    col_lbl, col_vals = st.columns([2, 4])
-                    lbl = col_lbl.text_input(f"Seviye {i+1} etiketi",
-                                              value=f"Seviye {i+1}",
-                                              key=f"ich_intra_lbl_{i}")
-                vals_str = col_vals.text_input("Pik akımları μA (virgülle ayır, min 3)",
-                                               placeholder="15.21, 15.43, 15.18, 15.35",
-                                               key=f"ich_intra_vals_{i}")
-                intra_rows.append((lbl, vals_str))
+                # Tablo modu — her satır bir konsantrasyon seviyesi, sütunlar tekrarlar
+                st.caption("Her satır = bir konsantrasyon seviyesi. Boş hücreler otomatik atlanır.")
+                default_intra = pd.DataFrame({
+                    'Seviye (Etiket)': ['Düşük', 'Orta', 'Yüksek'],
+                    'ip_1 (µA)': [None, None, None],
+                    'ip_2 (µA)': [None, None, None],
+                    'ip_3 (µA)': [None, None, None],
+                    'ip_4 (µA)': [None, None, None],
+                    'ip_5 (µA)': [None, None, None],
+                    'ip_6 (µA)': [None, None, None],
+                })
+                intra_tbl = st.data_editor(default_intra, num_rows="dynamic",
+                                            use_container_width=True, key="ich_intra_tbl")
+                ip_cols_intra = [c for c in intra_tbl.columns if c.startswith('ip_')]
+                for _, row in intra_tbl.iterrows():
+                    lbl = str(row['Seviye (Etiket)']).strip() if pd.notna(row['Seviye (Etiket)']) else ''
+                    if not lbl or lbl == 'None':
+                        continue
+                    vals = []
+                    for c in ip_cols_intra:
+                        try:
+                            if pd.notna(row[c]):
+                                vals.append(float(row[c]))
+                        except (ValueError, TypeError):
+                            pass
+                    if len(vals) >= 2:
+                        intra_rows.append((lbl, vals))
 
         # --- Günler Arası --------------------------------------------
         with ich_tab2:
             st.info("Aynı konsantrasyon seviyesinde farklı günlerde yapılan ölçümler. "
                     "Her gün en az 3 tekrar önerilir.")
 
-            ich_inter_mode = st.radio("Veri girişi", ["✏️ Manuel giriş", "📁 CSV yükle (intermediate_precision.csv)"],
+            ich_inter_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
                                        horizontal=True, key="ich_inter_mode")
 
             inter_rows = []  # (etiket, list[float])
 
-            if ich_inter_mode == "📁 CSV yükle (intermediate_precision.csv)":
-                st.caption("Beklenen sütunlar: **Gun**, **ip(uA)** — satırlar her tekrarı temsil eder.")
+            if ich_inter_mode == "📁 CSV yükle":
+                st.caption("Beklenen sütunlar: **Gun**, **ip(uA)** — her satır bir tekrar.")
                 ich_inter_up = st.file_uploader("Intermediate Precision CSV", type="csv", key="ich_inter_up")
                 if ich_inter_up:
                     try:
@@ -1265,53 +1279,41 @@ elif page == "📊  Calibration & LOD/LOQ":
                     except Exception as e:
                         st.error(f"CSV okunamadı: {e}")
             else:
-                n_inter_days = st.number_input("Gün sayısı", 1, 10, 3,
-                                                key="ich_n_inter", step=1)
-                for i in range(int(n_inter_days)):
-                    col_lbl, col_vals = st.columns([2, 4])
-                    lbl = col_lbl.text_input(f"Gün etiketi",
-                                              value=f"Gün {i+1}",
-                                              key=f"ich_inter_lbl_{i}")
-                    vals_str = col_vals.text_input("Pik akımları μA (virgülle ayır, min 3)",
-                                                   placeholder="15.21, 15.43, 15.18",
-                                                   key=f"ich_inter_vals_{i}")
-                    if vals_str.strip():
+                # Tablo modu — her satır bir gün, sütunlar tekrarlar
+                st.caption("Her satır = bir gün. Boş hücreler otomatik atlanır.")
+                default_inter = pd.DataFrame({
+                    'Gün (Etiket)': ['Gün 1', 'Gün 2', 'Gün 3'],
+                    'ip_1 (µA)': [None, None, None],
+                    'ip_2 (µA)': [None, None, None],
+                    'ip_3 (µA)': [None, None, None],
+                    'ip_4 (µA)': [None, None, None],
+                    'ip_5 (µA)': [None, None, None],
+                    'ip_6 (µA)': [None, None, None],
+                })
+                inter_tbl = st.data_editor(default_inter, num_rows="dynamic",
+                                            use_container_width=True, key="ich_inter_tbl")
+                ip_cols_inter = [c for c in inter_tbl.columns if c.startswith('ip_')]
+                for _, row in inter_tbl.iterrows():
+                    lbl = str(row['Gün (Etiket)']).strip() if pd.notna(row['Gün (Etiket)']) else ''
+                    if not lbl or lbl == 'None':
+                        continue
+                    vals = []
+                    for c in ip_cols_inter:
                         try:
-                            vals = [float(x.strip()) for x in vals_str.split(',') if x.strip()]
-                            if len(vals) >= 2:
-                                inter_rows.append((lbl, vals))
-                        except ValueError:
+                            if pd.notna(row[c]):
+                                vals.append(float(row[c]))
+                        except (ValueError, TypeError):
                             pass
+                    if len(vals) >= 2:
+                        inter_rows.append((lbl, vals))
 
         if st.button("▶ ICH Q2(R2) Validasyon Hesapla", type="secondary", use_container_width=True,
                      key="btn_ich_q2"):
-            # Parse intra-day — CSV modunda zaten list, manuel modda da list (yukarıda parse edildi)
-            intraday_data_ich = {}
-            for lbl, vs in intra_rows:
-                if isinstance(vs, list):
-                    if len(vs) >= 2:
-                        intraday_data_ich[lbl] = vs
-                elif isinstance(vs, str) and vs.strip():
-                    try:
-                        vals = [float(x.strip()) for x in vs.split(',') if x.strip()]
-                        if len(vals) >= 2:
-                            intraday_data_ich[lbl] = vals
-                    except ValueError:
-                        pass
+            # intra_rows ve inter_rows her modda zaten (etiket, list[float]) formatında
+            intraday_data_ich = {lbl: vs for lbl, vs in intra_rows if len(vs) >= 2}
 
             # Parse inter-day
-            interday_data_ich = {}
-            for lbl, vs in inter_rows:
-                if isinstance(vs, list):
-                    if len(vs) >= 2:
-                        interday_data_ich[lbl] = vs
-                elif isinstance(vs, str) and vs.strip():
-                    try:
-                        vals = [float(x.strip()) for x in vs.split(',') if x.strip()]
-                        if len(vals) >= 2:
-                            interday_data_ich[lbl] = vals
-                    except ValueError:
-                        pass
+            interday_data_ich = {lbl: vs for lbl, vs in inter_rows if len(vs) >= 2}
 
             if not intraday_data_ich:
                 st.error("En az 1 gün içi veri grubu girilmeli (etiket + virgülle ayrılmış değerler).")
