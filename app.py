@@ -376,10 +376,9 @@ with st.sidebar:
     else:
         st.caption("Enter key to enable AI interpretations")
     _MODEL_OPTIONS = [
-        "claude-opus-4-0",
-        "claude-sonnet-4-5",
+        "claude-opus-5-5",
         "claude-sonnet-4-6",
-        "claude-3-opus-20240229",
+        "claude-sonnet-4-5",
         "claude-3-5-sonnet-20241022",
     ]
     if "ai_model" not in st.session_state:
