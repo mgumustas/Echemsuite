@@ -2915,14 +2915,17 @@ elif page == "🧬  Selectivity":
                                    key=f"sel_int_conc_{_i}", label_visibility="collapsed")
         _isig  = _c3.number_input("", value=0.0, format="%.4f",
                                    key=f"sel_int_sig_{_i}", label_visibility="collapsed")
-        if _iname and _isig != 0.0:
-            _int_rows.append((_iname, _iconc, _isig))
+        if _iname.strip():          # 0.0 sinyal geçerli; sadece boş isim filtrele
+            _int_rows.append((_iname.strip(), _iconc, _isig))
+
+    if _sel_ref <= 0:
+        st.warning("⚠️ Reference signal (analyte alone) = 0 — lütfen yukarıdaki alana analite sinyalini girin.")
 
     if st.button("▶ Run Selectivity", type="primary", use_container_width=True, key="btn_sel_run"):
         if not _int_rows:
-            st.warning("Fill in at least one interferent row.")
+            st.warning("En az bir interferent satırı doldurun (isim alanı boş olmamalı).")
         elif _sel_ref <= 0:
-            st.warning("Reference signal (analyte alone) must be > 0.")
+            st.warning("Referans sinyal > 0 olmalı — analiteyi yalnız ölçüp 'Reference signal' alanına girin.")
         else:
             _sel_results = []
             for _iname, _iconc, _isig in _int_rows:
@@ -3109,6 +3112,70 @@ elif page == "🔬  Surface Characterization":
         "SEM images, EIS Nyquist comparison, and CV (bare vs modified) analysis — "
         "three key lines of evidence proving surface modification."
     )
+
+    # ── Örnek veri seti (ZIP) ────────────────────────────────────────────────
+    with st.expander("📦 Download Example Dataset (ZIP — 4 CSV files)", expanded=False):
+        st.caption(
+            "NiFe₂O₄/CSPE örnek verisi: EIS Nyquist (bare + modified) ve CV (bare + modified). "
+            "Template olarak veya sonuçları karşılaştırmak için kullanın."
+        )
+        import io as _io_surf, zipfile as _zf_surf
+        _surf_files = {
+            "eis_bare_GCE.csv": (
+                "# EIS Nyquist — Bare GCE | Z_real (Ω), -Z_imag (Ω)\n"
+                "Zreal_Ohm,Zimag_Ohm\n"
+                "12.4,0.6\n13.1,1.9\n14.8,5.2\n18.3,12.8\n28.6,28.4\n"
+                "55.2,51.3\n112.4,78.6\n198.5,82.4\n285.3,65.8\n348.2,42.1\n"
+                "392.6,24.8\n418.4,13.2\n430.1,6.8\n436.5,3.4\n439.2,1.8\n"
+            ),
+            "eis_NiFe2O4_CSPE.csv": (
+                "# EIS Nyquist — NiFe₂O₄/CSPE | Z_real (Ω), -Z_imag (Ω)\n"
+                "Zreal_Ohm,Zimag_Ohm\n"
+                "8.2,0.4\n8.8,1.4\n10.1,3.8\n13.4,9.2\n20.1,19.8\n"
+                "36.8,33.5\n62.4,46.2\n92.1,42.8\n118.3,30.4\n134.6,18.8\n"
+                "143.2,10.6\n147.8,5.8\n150.1,3.1\n151.4,1.6\n152.0,0.9\n"
+            ),
+            "cv_bare_GCE.csv": (
+                "# CV — Bare GCE | Potential (V vs Ag/AgCl), Current (µA)\n"
+                "# Çözelti: 5 mM [Fe(CN)6]³⁻/⁴⁻ in 0.1 M KCl | v = 50 mV/s\n"
+                "Potential_V,Current_uA\n"
+                "-0.20,0.42\n-0.15,0.68\n-0.10,0.95\n-0.05,1.24\n"
+                "0.00,1.52\n0.05,1.78\n0.10,2.08\n0.15,2.42\n"
+                "0.20,2.84\n0.25,3.21\n0.30,3.48\n0.35,3.42\n"
+                "0.40,3.08\n0.45,2.65\n0.50,2.24\n0.55,1.92\n"
+                "0.60,1.68\n0.55,1.42\n0.50,1.18\n0.45,0.95\n"
+                "0.40,0.71\n0.35,0.44\n0.30,0.14\n0.25,-0.18\n"
+                "0.20,-0.52\n0.15,-0.88\n0.10,-1.24\n0.05,-1.48\n"
+                "0.00,-1.58\n-0.05,-1.52\n-0.10,-1.38\n-0.15,-1.18\n"
+                "-0.20,-0.95\n"
+            ),
+            "cv_NiFe2O4_CSPE.csv": (
+                "# CV — NiFe₂O₄/CSPE | Potential (V vs Ag/AgCl), Current (µA)\n"
+                "# Çözelti: 5 mM [Fe(CN)6]³⁻/⁴⁻ in 0.1 M KCl | v = 50 mV/s\n"
+                "Potential_V,Current_uA\n"
+                "-0.20,1.18\n-0.15,1.84\n-0.10,2.58\n-0.05,3.42\n"
+                "0.00,4.28\n0.05,5.14\n0.10,6.08\n0.15,7.12\n"
+                "0.20,8.28\n0.25,9.42\n0.30,10.14\n0.35,9.88\n"
+                "0.40,8.95\n0.45,7.82\n0.50,6.68\n0.55,5.78\n"
+                "0.60,5.08\n0.55,4.42\n0.50,3.78\n0.45,3.14\n"
+                "0.40,2.44\n0.35,1.68\n0.30,0.82\n0.25,-0.14\n"
+                "0.20,-1.28\n0.15,-2.52\n0.10,-3.68\n0.05,-4.52\n"
+                "0.00,-4.84\n-0.05,-4.68\n-0.10,-4.28\n-0.15,-3.72\n"
+                "-0.20,-3.08\n"
+            ),
+        }
+        _zip_buf_surf = _io_surf.BytesIO()
+        with _zf_surf.ZipFile(_zip_buf_surf, "w", _zf_surf.ZIP_DEFLATED) as _zf:
+            for _fname, _fcontent in _surf_files.items():
+                _zf.writestr(_fname, _fcontent)
+        st.download_button(
+            "⬇️ Download NiFe₂O₄/CSPE Example Dataset (.zip)",
+            data=_zip_buf_surf.getvalue(),
+            file_name="surface_charact_example_dataset.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
+        st.caption("ZIP içeriği: `eis_bare_GCE.csv`, `eis_NiFe2O4_CSPE.csv`, `cv_bare_GCE.csv`, `cv_NiFe2O4_CSPE.csv`")
 
     _surf_electrode = st.text_input("Electrode / material name",
                                      value=st.session_state.get("surf_electrode", _cur().get("name","Modified Electrode")),
