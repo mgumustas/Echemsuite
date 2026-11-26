@@ -2826,6 +2826,66 @@ elif page == "🧬  Selectivity":
         "Acceptance criterion: % signal change ≤ ±5 % (user-adjustable)."
     )
 
+    # ── Template indirme + CSV yükleme ──────────────────────────────────────
+    with st.expander("📋 CSV Template — download & upload", expanded=False):
+        _sel_tmpl_lines = [
+            "# SilverstoneLab — Selectivity Template",
+            "# Sütunlar: Interferent adı | Konsantrasyon (µM) | Ölçülen sinyal (µA)",
+            "# Analite sinyal (referans) için ayrı bir satır YOK — aşağıdaki Reference Signal alanına girin",
+            "Interferent,Concentration_uM,Signal_uA",
+            "Ascorbic Acid,100.0,0.0",
+            "Uric Acid,100.0,0.0",
+            "Epinephrine,100.0,0.0",
+            "Glucose,500.0,0.0",
+            "NaCl,500.0,0.0",
+            "Urea,500.0,0.0",
+        ]
+        _sel_tmpl_bytes = "\n".join(_sel_tmpl_lines).encode("utf-8")
+        _stcol1, _stcol2 = st.columns(2)
+        with _stcol1:
+            st.markdown("**1 · Download Template**")
+            st.download_button(
+                "⬇️ Download Selectivity Template (.csv)",
+                data=_sel_tmpl_bytes,
+                file_name="selectivity_template.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+            st.caption("Sarı (Signal_uA) sütununu doldurun, diğerlerini gerekirse düzenleyin.")
+        with _stcol2:
+            st.markdown("**2 · Upload Filled Template**")
+            _sel_up = st.file_uploader(
+                "Upload selectivity CSV", type=["csv"], key="sel_csv_up"
+            )
+            if _sel_up:
+                try:
+                    import io as _io_sel_up
+                    _sel_up.seek(0)
+                    _df_sel = pd.read_csv(_io_sel_up.BytesIO(_sel_up.read()), comment="#")
+                    _sel_up.seek(0)
+                    # Normalize sütun isimleri
+                    _df_sel.columns = [c.strip() for c in _df_sel.columns]
+                    _name_col = _df_sel.columns[0]
+                    _conc_col = _df_sel.columns[1] if len(_df_sel.columns) > 1 else None
+                    _sig_col  = _df_sel.columns[2] if len(_df_sel.columns) > 2 else None
+                    _n_loaded = len(_df_sel)
+                    # Session state'e yaz → widget'lar otomatik dolacak
+                    st.session_state["sel_n_int"] = _n_loaded
+                    for _idx, _row in _df_sel.iterrows():
+                        st.session_state[f"sel_int_name_{_idx}"] = str(_row[_name_col]).strip()
+                        try:
+                            st.session_state[f"sel_int_conc_{_idx}"] = float(_row[_conc_col]) if _conc_col else 100.0
+                        except (TypeError, ValueError):
+                            st.session_state[f"sel_int_conc_{_idx}"] = 100.0
+                        try:
+                            st.session_state[f"sel_int_sig_{_idx}"] = float(_row[_sig_col]) if _sig_col else 0.0
+                        except (TypeError, ValueError):
+                            st.session_state[f"sel_int_sig_{_idx}"] = 0.0
+                    st.success(f"✓ {_n_loaded} interferent yüklendi — aşağıdaki tabloyu kontrol edin.")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"CSV okunamadı: {_e}")
+
     _sel_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="sel_analyte")
     _sel_unit    = st.text_input("Unit", value=st.session_state.get("cal_unit","µM"), key="sel_unit_inp")
     _sel_conc    = st.number_input("Analyte concentration (µM)", value=10.0, min_value=0.0001, format="%.4f", key="sel_conc",
@@ -2836,9 +2896,11 @@ elif page == "🧬  Selectivity":
                                     help="Maximum allowed signal change (%) due to an interferent. ICH Q2(R2) commonly uses ±5% for pharmaceutical sensors. Biosensors in complex matrices may use ±10–15%.")
 
     st.markdown("#### Interferent Table")
-    st.caption("One interferent per row. Enter concentration and measured peak current (µA).")
+    st.caption("One interferent per row — veya yukarıdan CSV yükleyin.")
 
-    _n_int = st.number_input("Number of interferents", min_value=1, max_value=20, value=6, step=1, key="sel_n_int")
+    _n_int = st.number_input("Number of interferents", min_value=1, max_value=20,
+                             value=int(st.session_state.get("sel_n_int", 6)),
+                             step=1, key="sel_n_int")
     _int_rows = []
     _icols = st.columns([3, 2, 2])
     _icols[0].markdown("**Interferent**")
