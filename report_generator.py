@@ -78,8 +78,12 @@ def _safe_pdf(s: str, unicode_ok: bool) -> str:
 # PDF  (reportlab)
 # ═══════════════════════════════════════════════════════════
 
-def generate_pdf(project: dict, output_path: str) -> str:
-    """Write a PDF report to output_path and return that path."""
+def generate_pdf(project: dict, output_path: str, report_type: str = "detailed") -> str:
+    """Write a PDF report to output_path and return that path.
+
+    report_type: 'summary' (metrics + interpretation only, no figures)
+                 'detailed' (full output including figures, raw data tables)
+    """
     try:
         from reportlab.lib.pagesizes   import A4
         from reportlab.lib             import colors
@@ -174,7 +178,8 @@ def generate_pdf(project: dict, output_path: str) -> str:
     story.append(Paragraph("Electrochemical Analysis Suite", BRAND))
     story.append(Spacer(1, 0.6*cm))
     story.append(Paragraph(f"<b>{S(project.get('name','Untitled Project'))}</b>", H1))
-    story.append(Paragraph(f"Analysis Report — {date_str}", BODY))
+    _rtype_label = "Summary Report" if report_type == "summary" else "Detailed Analysis Report"
+    story.append(Paragraph(f"{_rtype_label} — {date_str}", BODY))
     if project.get("notes"):
         story.append(Paragraph(f"<i>{S(project['notes'])}</i>", ITALIC))
     story.append(Spacer(1, 0.4*cm))
@@ -192,16 +197,66 @@ def generate_pdf(project: dict, output_path: str) -> str:
 
     story.append(PageBreak())
 
+    # ── helper: render a standard metrics table ─────────────
+    def _pdf_metrics_table(metrics: dict):
+        tbl_data = [["Parameter", "Value"]]
+        for k, v in metrics.items():
+            _v = _fmt_metric(v)
+            if _v not in ("", "None", "N/A", "—"):
+                tbl_data.append([S(str(k)), S(_v)])
+        if len(tbl_data) > 1:
+            tbl = Table(tbl_data, colWidths=[8*cm, 7*cm])
+            tbl.setStyle(TableStyle([
+                ("BACKGROUND",    (0,0), (-1,0), navy),
+                ("TEXTCOLOR",     (0,0), (-1,0), colors.white),
+                ("FONTNAME",      (0,0), (-1,0), _BOLD_FONT),
+                ("FONTNAME",      (0,1), (-1,-1), _UNICODE_FONT),
+                ("FONTSIZE",      (0,0), (-1,-1), 9),
+                ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, light]),
+                ("GRID",          (0,0), (-1,-1), 0.4, colors.lightgrey),
+                ("LEFTPADDING",   (0,0), (-1,-1), 6),
+                ("RIGHTPADDING",  (0,0), (-1,-1), 6),
+                ("TOPPADDING",    (0,0), (-1,-1), 4),
+                ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ]))
+            story.append(tbl)
+            story.append(Spacer(1, 0.3*cm))
+
+    def _pdf_embed_plots(plot_bytes_list, title, fig_offset=0, dpi=300):
+        for i, pb in enumerate(plot_bytes_list):
+            try:
+                img_buf = io.BytesIO(pb)
+                pil = PILImage.open(img_buf)
+                # Try to read the actual DPI stored in the image metadata;
+                # fall back to the caller-supplied dpi for sizing only.
+                img_dpi = pil.info.get("dpi", (dpi, dpi))
+                img_dpi_x = img_dpi[0] if isinstance(img_dpi, (tuple, list)) else dpi
+                img_dpi_x = max(img_dpi_x, 72)   # guard against 0 / very small
+                w_px, h_px = pil.size
+                w_cm = min(w_px / img_dpi_x * 2.54, 14)   # max 14 cm wide
+                h_cm = h_px / w_px * w_cm
+                img_buf.seek(0)
+                rl_img = RLImage(img_buf, width=w_cm*cm, height=h_cm*cm)
+                story.append(KeepTogether([
+                    rl_img,
+                    Paragraph(f"Figure {fig_offset+i+1}. {S(title)} — plot {i+1}.", CAPTION),
+                ]))
+            except Exception:
+                pass
+
     # ── module sections ─────────────────────────────────────
-    # Strip emojis from section titles for PDF
     section_meta = {
-        "cv":  "Cyclic Voltammetry — Scan Rate Study",
-        "eis": "Electrochemical Impedance Spectroscopy",
-        "ph":  "pH — Working pH Optimisation",
-        "cal": "Calibration Curve, LOD & LOQ",
-        "sa":  "Standard Addition",
+        "cv":   "Cyclic Voltammetry — Scan Rate Study",
+        "eis":  "Electrochemical Impedance Spectroscopy",
+        "ph":   "pH — Working pH Optimisation",
+        "cal":  "Calibration Curve, LOD & LOQ",
+        "sa":   "Standard Addition",
+        "sel":  "Selectivity / Interferent Study",
+        "stab": "Sensor Stability",
+        "surf": "Surface Characterization",
     }
 
+    _fig_counter = 0
     for key, title in section_meta.items():
         if key not in analyses:
             continue
@@ -211,63 +266,75 @@ def generate_pdf(project: dict, output_path: str) -> str:
         story.append(HRFlowable(width="100%", thickness=0.5, color=steel))
         story.append(Spacer(1, 0.2*cm))
 
-        # metrics table — unwrap list values, sanitize text
+        # ── metrics table (always shown) ───────────────────
         metrics = a.get("metrics", {})
         if metrics:
             story.append(Paragraph("Key Metrics", H3))
-            tbl_data = [["Parameter", "Value"]]
-            for k, v in metrics.items():
-                _v = _fmt_metric(v)
-                if _v not in ("", "None", "N/A", "—"):
-                    tbl_data.append([S(str(k)), S(_v)])
-            if len(tbl_data) > 1:
-                tbl = Table(tbl_data, colWidths=[8*cm, 7*cm])
-                tbl.setStyle(TableStyle([
-                    ("BACKGROUND",   (0,0), (-1,0), navy),
-                    ("TEXTCOLOR",    (0,0), (-1,0), colors.white),
-                    ("FONTNAME",     (0,0), (-1,0), _BOLD_FONT),
-                    ("FONTNAME",     (0,1), (-1,-1), _UNICODE_FONT),
-                    ("FONTSIZE",     (0,0), (-1,-1), 9),
-                    ("ROWBACKGROUNDS",(0,1), (-1,-1), [colors.white, light]),
-                    ("GRID",         (0,0), (-1,-1), 0.4, colors.lightgrey),
-                    ("LEFTPADDING",  (0,0), (-1,-1), 6),
-                    ("RIGHTPADDING", (0,0), (-1,-1), 6),
-                    ("TOPPADDING",   (0,0), (-1,-1), 4),
-                    ("BOTTOMPADDING",(0,0), (-1,-1), 4),
-                ]))
-                story.append(tbl)
-                story.append(Spacer(1, 0.3*cm))
+            _pdf_metrics_table(metrics)
 
-        # EIS param dataframe — strip Unicode from monospace block
-        eis_df = a.get("param_df_str", "")
-        if key == "eis" and eis_df:
-            story.append(Paragraph("Fit Parameters", H3))
-            _eis_txt = _safe_pdf(eis_df[:1200], _unicode_ok)
-            story.append(Paragraph(f"<font face='Courier' size='8'>{_eis_txt}</font>", BODY))
-            story.append(Spacer(1, 0.2*cm))
+        # ── DETAILED-ONLY sections ─────────────────────────
+        if report_type == "detailed":
 
-        # plots
-        plot_bytes_list = a.get("plot_bytes", [])
-        if plot_bytes_list:
-            story.append(Paragraph("Figures", H3))
-            for i, pb in enumerate(plot_bytes_list):
-                try:
-                    img_buf = io.BytesIO(pb)
-                    pil = PILImage.open(img_buf)
-                    w_px, h_px = pil.size
-                    dpi = 150
-                    w_cm = min(w_px / dpi * 2.54, 14)
-                    h_cm = h_px / w_px * w_cm
-                    img_buf.seek(0)
-                    rl_img = RLImage(img_buf, width=w_cm*cm, height=h_cm*cm)
-                    story.append(KeepTogether([
-                        rl_img,
-                        Paragraph(f"Figure {i+1}. {S(title)} — plot {i+1}.", CAPTION),
+            # EIS param dataframe
+            eis_df = a.get("param_df_str", "")
+            if key == "eis" and eis_df:
+                story.append(Paragraph("Fit Parameters", H3))
+                _eis_txt = _safe_pdf(eis_df[:1200], _unicode_ok)
+                story.append(Paragraph(f"<font face='Courier' size='8'>{_eis_txt}</font>", BODY))
+                story.append(Spacer(1, 0.2*cm))
+
+            # Selectivity data table
+            if key == "sel":
+                sel_rows = a.get("rows", [])
+                if sel_rows:
+                    story.append(Paragraph("Interferent Results", H3))
+                    _cols = list(sel_rows[0].keys()) if sel_rows else []
+                    hdr = [S(str(c)) for c in _cols]
+                    tbl_data2 = [hdr] + [[S(str(r.get(c,""))) for c in _cols] for r in sel_rows]
+                    tbl2 = Table(tbl_data2, repeatRows=1)
+                    tbl2.setStyle(TableStyle([
+                        ("BACKGROUND",   (0,0), (-1,0), navy),
+                        ("TEXTCOLOR",    (0,0), (-1,0), colors.white),
+                        ("FONTNAME",     (0,0), (-1,-1), _UNICODE_FONT),
+                        ("FONTSIZE",     (0,0), (-1,-1), 8),
+                        ("GRID",         (0,0), (-1,-1), 0.4, colors.lightgrey),
+                        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,light]),
+                        ("LEFTPADDING",  (0,0), (-1,-1), 5),
+                        ("RIGHTPADDING", (0,0), (-1,-1), 5),
                     ]))
-                except Exception:
-                    pass
+                    story.append(tbl2)
+                    story.append(Spacer(1, 0.3*cm))
 
-        # AI interpretation
+            # Stability data table
+            if key == "stab":
+                stab_rows = a.get("rows", [])
+                if stab_rows:
+                    story.append(Paragraph("Daily Recovery Data", H3))
+                    _cols2 = list(stab_rows[0].keys()) if stab_rows else []
+                    hdr2 = [S(str(c)) for c in _cols2]
+                    tbl_data3 = [hdr2] + [[S(str(r.get(c,""))) for c in _cols2] for r in stab_rows]
+                    tbl3 = Table(tbl_data3, repeatRows=1)
+                    tbl3.setStyle(TableStyle([
+                        ("BACKGROUND",   (0,0), (-1,0), navy),
+                        ("TEXTCOLOR",    (0,0), (-1,0), colors.white),
+                        ("FONTNAME",     (0,0), (-1,-1), _UNICODE_FONT),
+                        ("FONTSIZE",     (0,0), (-1,-1), 8),
+                        ("GRID",         (0,0), (-1,-1), 0.4, colors.lightgrey),
+                        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,light]),
+                        ("LEFTPADDING",  (0,0), (-1,-1), 5),
+                        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+                    ]))
+                    story.append(tbl3)
+                    story.append(Spacer(1, 0.3*cm))
+
+            # Embedded figures
+            plot_bytes_list = a.get("plot_bytes", [])
+            if plot_bytes_list:
+                story.append(Paragraph("Figures", H3))
+                _pdf_embed_plots(plot_bytes_list, title, _fig_counter)
+                _fig_counter += len(plot_bytes_list)
+
+        # ── AI interpretation (always shown) ──────────────
         interp = a.get("interpretation", "")
         if interp:
             story.append(Paragraph("Expert Interpretation", H3))
@@ -305,8 +372,12 @@ def generate_pdf(project: dict, output_path: str) -> str:
 # WORD (.docx)
 # ═══════════════════════════════════════════════════════════
 
-def generate_docx(project: dict, output_path: str) -> str:
-    """Write a Word report to output_path and return that path."""
+def generate_docx(project: dict, output_path: str, report_type: str = "detailed") -> str:
+    """Write a Word report to output_path and return that path.
+
+    report_type: 'summary' (metrics + interpretation only)
+                 'detailed' (full output including figures and raw tables)
+    """
     try:
         from docx                        import Document
         from docx.shared                 import Pt, Cm, RGBColor, Inches
@@ -349,7 +420,8 @@ def generate_docx(project: dict, output_path: str) -> str:
     h = doc.add_heading(project.get("name", "Untitled Project"), level=1)
     h.runs[0].font.size = Pt(22); _set_color(h.runs[0], NAVY)
 
-    p = doc.add_paragraph(f"Analysis Report — {date_str}")
+    _rtype_lbl = "Summary Report" if report_type == "summary" else "Detailed Analysis Report"
+    p = doc.add_paragraph(f"{_rtype_lbl} — {date_str}")
     p.runs[0].font.size = Pt(10)
 
     if project.get("notes"):
@@ -368,15 +440,62 @@ def generate_docx(project: dict, output_path: str) -> str:
                 doc.add_paragraph(para.strip())
         doc.add_page_break()
 
+    # ── helper: add a blue-header metrics table ──────────────
+    def _docx_metrics_table(metrics: dict):
+        doc.add_heading("Key Metrics", level=3)
+        tbl = doc.add_table(rows=1, cols=2)
+        tbl.style = "Table Grid"
+        hdr = tbl.rows[0].cells
+        hdr[0].text = "Parameter"; hdr[1].text = "Value"
+        for c in hdr:
+            for run in c.paragraphs[0].runs:
+                run.bold = True; run.font.color.rgb = RGBColor(255,255,255)
+            tc   = c._tc
+            tcPr = tc.get_or_add_tcPr()
+            shd  = OxmlElement('w:shd')
+            shd.set(qn('w:val'), 'clear')
+            shd.set(qn('w:color'), 'auto')
+            shd.set(qn('w:fill'), '1f4e79')
+            tcPr.append(shd)
+        for k, v in metrics.items():
+            _v = _fmt_metric(v)
+            if _v not in ("", "None", "N/A", "—"):
+                row = tbl.add_row().cells
+                row[0].text = str(k); row[1].text = _v
+        doc.add_paragraph()
+
+    def _docx_data_table(heading: str, rows: list[dict]):
+        """Generic list-of-dicts → Word table."""
+        if not rows:
+            return
+        doc.add_heading(heading, level=3)
+        cols = list(rows[0].keys())
+        tbl = doc.add_table(rows=1, cols=len(cols))
+        tbl.style = "Table Grid"
+        hdr = tbl.rows[0].cells
+        for ci, col in enumerate(cols):
+            hdr[ci].text = str(col)
+            for run in hdr[ci].paragraphs[0].runs:
+                run.bold = True
+        for r in rows:
+            row = tbl.add_row().cells
+            for ci, col in enumerate(cols):
+                row[ci].text = str(r.get(col, ""))
+        doc.add_paragraph()
+
     # ── module sections ──────────────────────────────────────
     section_titles = {
-        "cv":  "📈 Cyclic Voltammetry — Scan Rate Study",
-        "eis": "🔵 Electrochemical Impedance Spectroscopy",
-        "ph":  "🧪 pH — Working pH Optimisation",
-        "cal": "📊 Calibration Curve, LOD & LOQ",
-        "sa":  "➕ Standard Addition",
+        "cv":   "📈 Cyclic Voltammetry — Scan Rate Study",
+        "eis":  "🔵 Electrochemical Impedance Spectroscopy",
+        "ph":   "🧪 pH — Working pH Optimisation",
+        "cal":  "📊 Calibration Curve, LOD & LOQ",
+        "sa":   "➕ Standard Addition",
+        "sel":  "🧬 Selectivity / Interferent Study",
+        "stab": "📅 Sensor Stability",
+        "surf": "🔬 Surface Characterization",
     }
 
+    _fig_ctr = 0
     for key, title in section_titles.items():
         if key not in analyses:
             continue
@@ -385,62 +504,58 @@ def generate_docx(project: dict, output_path: str) -> str:
         h2 = doc.add_heading(title, level=2)
         _set_color(h2.runs[0], STEEL)
 
-        # metrics table
+        # Metrics table (always)
         metrics = a.get("metrics", {})
         if metrics:
-            doc.add_heading("Key Metrics", level=3)
-            tbl = doc.add_table(rows=1, cols=2)
-            tbl.style = "Table Grid"
-            hdr = tbl.rows[0].cells
-            hdr[0].text = "Parameter"; hdr[1].text = "Value"
-            for c in hdr:
-                for run in c.paragraphs[0].runs:
-                    run.bold = True; run.font.color.rgb = RGBColor(255,255,255)
-                # blue header background (via XML shading)
-                tc = c._tc
-                tcPr = tc.get_or_add_tcPr()
-                shd  = OxmlElement('w:shd')
-                shd.set(qn('w:val'), 'clear')
-                shd.set(qn('w:color'), 'auto')
-                shd.set(qn('w:fill'), '1f4e79')
-                tcPr.append(shd)
-            for k, v in metrics.items():
-                _v = _fmt_metric(v)
-                if _v not in ("", "None", "N/A", "—"):
-                    row = tbl.add_row().cells
-                    row[0].text = str(k); row[1].text = _v
-            doc.add_paragraph()
+            _docx_metrics_table(metrics)
 
-        # EIS string
-        eis_df_str = a.get("param_df_str", "")
-        if key == "eis" and eis_df_str:
-            doc.add_heading("Fit Parameters", level=3)
-            p = doc.add_paragraph(eis_df_str[:1200])
-            p.runs[0].font.name = "Courier New"; p.runs[0].font.size = Pt(8)
-            doc.add_paragraph()
+        # ── DETAILED-ONLY content ────────────────────────────
+        if report_type == "detailed":
 
-        # plots
-        for i, pb in enumerate(a.get("plot_bytes", [])):
-            try:
-                buf = io.BytesIO(pb)
-                pil = PILImage.open(buf); w_px, h_px = pil.size
-                buf.seek(0)
-                width_in = min(w_px / 150, 6.0)
-                doc.add_picture(buf, width=Inches(width_in))
-                cap = doc.add_paragraph(f"Figure {i+1}. {title}")
-                cap.runs[0].italic = True; cap.runs[0].font.size = Pt(9)
-                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            except Exception:
-                pass
+            # EIS fit parameters
+            eis_df_str = a.get("param_df_str", "")
+            if key == "eis" and eis_df_str:
+                doc.add_heading("Fit Parameters", level=3)
+                p = doc.add_paragraph(eis_df_str[:1200])
+                p.runs[0].font.name = "Courier New"; p.runs[0].font.size = Pt(8)
+                doc.add_paragraph()
 
-        # AI interpretation
+            # Selectivity interferent table
+            if key == "sel":
+                _docx_data_table("Interferent Results", a.get("rows", []))
+
+            # Stability daily recovery table
+            if key == "stab":
+                _docx_data_table("Daily Recovery Data", a.get("rows", []))
+
+            # Figures — use stored DPI metadata for correct sizing at ≥300 DPI
+            for i, pb in enumerate(a.get("plot_bytes", [])):
+                try:
+                    buf = io.BytesIO(pb)
+                    pil = PILImage.open(buf)
+                    w_px, h_px = pil.size
+                    img_dpi = pil.info.get("dpi", (300, 300))
+                    img_dpi_x = img_dpi[0] if isinstance(img_dpi, (tuple, list)) else 300
+                    img_dpi_x = max(img_dpi_x, 72)
+                    width_in = min(w_px / img_dpi_x, 6.0)   # max 6 inches
+                    buf.seek(0)
+                    doc.add_picture(buf, width=Inches(width_in))
+                    cap = doc.add_paragraph(f"Figure {_fig_ctr+i+1}. {title}")
+                    cap.runs[0].italic = True; cap.runs[0].font.size = Pt(9)
+                    cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                except Exception:
+                    pass
+            _fig_ctr += len(a.get("plot_bytes", []))
+
+        # AI interpretation (always)
         interp = a.get("interpretation", "")
         if interp:
             doc.add_heading("Expert Interpretation", level=3)
             for para in interp.split("\n\n"):
                 if para.strip():
                     p = doc.add_paragraph(para.strip())
-                    p.runs[0].italic = True if p.runs else None
+                    if p.runs:
+                        p.runs[0].italic = True
 
         doc.add_paragraph()
 
@@ -470,17 +585,26 @@ def generate_docx(project: dict, output_path: str) -> str:
 # COMBINED
 # ═══════════════════════════════════════════════════════════
 
-def generate_reports(project: dict, out_dir: str) -> dict[str, str]:
-    """Generate both PDF and DOCX; return {'pdf': path, 'docx': path}."""
+def generate_reports(project: dict, out_dir: str,
+                     report_type: str = "detailed") -> dict[str, str]:
+    """Generate PDF and DOCX; return {'pdf': path, 'docx': path}.
+
+    report_type: 'summary' | 'detailed'
+    """
     os.makedirs(out_dir, exist_ok=True)
-    stem  = project.get("name","report").replace(" ","_").replace("/","_")[:50]
-    paths = {}
+    stem   = project.get("name","report").replace(" ","_").replace("/","_")[:50]
+    suffix = "_summary" if report_type == "summary" else "_detailed"
+    paths  = {}
     try:
-        paths["pdf"]  = generate_pdf(project, os.path.join(out_dir, f"{stem}.pdf"))
+        paths["pdf"]  = generate_pdf(
+            project, os.path.join(out_dir, f"{stem}{suffix}.pdf"),
+            report_type=report_type)
     except Exception as e:
         paths["pdf_error"] = str(e)
     try:
-        paths["docx"] = generate_docx(project, os.path.join(out_dir, f"{stem}.docx"))
+        paths["docx"] = generate_docx(
+            project, os.path.join(out_dir, f"{stem}{suffix}.docx"),
+            report_type=report_type)
     except Exception as e:
         paths["docx_error"] = str(e)
     return paths
