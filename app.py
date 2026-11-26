@@ -467,6 +467,30 @@ with st.sidebar:
 
     st.divider()
 
+    # ── Oturumu canlı tut ────────────────────────────────────
+    _keep_alive = st.checkbox(
+        "🔁 Oturumu açık tut (her 4 dk yenile)",
+        value=st.session_state.get("keep_alive", False),
+        key="keep_alive_cb",
+        help="Uzun süre analiz yapmadan bekliyorsanız oturumun kapanmaması için işaretleyin. "
+             "Sayfa sessizce yenilenir; veriler kaydedildiğinden kayıp olmaz."
+    )
+    st.session_state["keep_alive"] = _keep_alive
+    if _keep_alive:
+        # 4 dakika = 240 000 ms
+        st.components.v1.html(
+            """<script>
+            if (!window._silKA) {
+                window._silKA = true;
+                setTimeout(function() { window.location.reload(); }, 240000);
+            }
+            </script>""",
+            height=0,
+        )
+        st.caption("⏱ Sayfa 4 dakikada bir sessizce yenilenecek.")
+
+    st.divider()
+
     # ── Navigation ───────────────────────────────────────────
     _NAV_OPTIONS = [
         "🏠  Home",
@@ -1410,40 +1434,163 @@ elif page == "📄  Report":
         st.warning("No analyses found in this project. Run at least one module first.")
         st.stop()
 
-    # summary of what's ready
-    labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
-              "cal":"📊 Calibration","sa":"➕ Std Addition"}
+    # ── Durum tablosu ────────────────────────────────────────
+    _mod_labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
+                   "cal":"📊 Calibration","sa":"➕ Std Addition"}
     st.markdown("**Analyses ready for report:**")
-    for k,a in analyses.items():
+    _missing_interp = []
+    for k, a in analyses.items():
         interp = a.get("interpretation","")
-        icon   = "🤖" if interp else "📊"
-        st.markdown(f"- {icon} {labels.get(k,k)} — {a.get('timestamp','')}"
-                    + (" *(with AI interpretation)*" if interp else ""))
+        if interp:
+            st.markdown(f"- 🤖 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ✅ *AI yorumu var*")
+        else:
+            st.markdown(f"- 📊 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ⚪ *AI yorumu yok*")
+            _missing_interp.append(k)
 
     st.divider()
 
-    # Executive summary generation
-    ak = st.session_state.api_key
-    st.markdown('<div class="sec">Executive Summary</div>', unsafe_allow_html=True)
+    # ── AI Toplu Yorum Üretimi ─────────────────────────────
+    _report_ak = (st.session_state.get("api_key","") or
+                  st.session_state.get("openai_api_key","") or
+                  st.session_state.get("gemini_api_key",""))
+    _report_provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
+
+    st.markdown('<div class="sec">🤖 AI Modül Yorumları</div>', unsafe_allow_html=True)
+
+    if not _report_ak:
+        st.info("Sidebar'dan bir AI API anahtarı girin — tüm modüllerin yorumlarını buradan tek seferde üretebilirsiniz.")
+    else:
+        # Interp fonksiyonu + argüman eşlemesi
+        _INTERP_MAP = {
+            "cv":  (interpret_cv,  lambda a: {"results": a.get("metrics",{}),
+                                               "electrode_name": proj.get("name","")}),
+            "eis": (interpret_eis, lambda a: {"param_df": None,
+                                               "electrode_labels": a.get("metrics",{}).get("electrodes",[])}),
+            "ph":  (interpret_ph,  lambda a: {"results": a.get("metrics",{}),
+                                               "analyte": proj.get("notes","analyte")}),
+            "cal": (interpret_calibration,
+                                   lambda a: {"results": a.get("metrics",{}),
+                                               "analyte": proj.get("notes","analyte"),
+                                               "unit": "µM"}),
+            "sa":  (interpret_standard_addition,
+                                   lambda a: {"results": a.get("metrics",{}),
+                                               "analyte": proj.get("notes","analyte"),
+                                               "unit": "µM"}),
+        }
+
+        def _run_interp(key, fn, kwargs):
+            """AI yorumu üret (provider'a göre yönlendir)."""
+            if _report_provider == "ChatGPT (OpenAI)":
+                return _call_openai(
+                    st.session_state.get("openai_api_key",""),
+                    st.session_state.get("gpt_model","gpt-4o"),
+                    fn, kwargs)
+            elif _report_provider == "Gemini (Google)":
+                return _call_gemini(
+                    st.session_state.get("gemini_api_key",""),
+                    st.session_state.get("gemini_model","gemini-2.0-flash"),
+                    fn, kwargs)
+            else:
+                return fn(api_key=st.session_state.get("api_key",""),
+                          model=st.session_state.get("ai_model","claude-opus-5-5"),
+                          **kwargs)
+
+        # Mevcut yorumlar (göster)
+        for k, a in analyses.items():
+            interp = a.get("interpretation","")
+            if interp:
+                with st.expander(f"✅ {_mod_labels.get(k,k)} — kayıtlı yorum"):
+                    st.markdown(f'<div class="interp-box">{interp.replace(chr(10),"<br>")}</div>',
+                                unsafe_allow_html=True)
+
+        # Eksik yorumlar için "üret" butonları
+        if _missing_interp:
+            st.info(f"Yorum eksik modüller: {', '.join(_mod_labels.get(k,k) for k in _missing_interp)}")
+
+            _col_all, _col_sel = st.columns(2)
+            if _col_all.button("🤖 Tümü İçin AI Yorum Üret", use_container_width=True,
+                                key="ai_all_modules"):
+                _progress = st.progress(0, text="Başlıyor…")
+                _total = len(_missing_interp)
+                for _i, _mk in enumerate(_missing_interp):
+                    _progress.progress((_i) / _total,
+                                       text=f"{_mod_labels.get(_mk,_mk)} yorumlanıyor…")
+                    try:
+                        _fn, _kw_fn = _INTERP_MAP[_mk]
+                        _kw = _kw_fn(analyses[_mk])
+                        _text = _run_interp(_mk, _fn, _kw)
+                        analyses[_mk]["interpretation"] = _text
+                        st.session_state[f"interp_{_mk}"] = _text
+                    except Exception as _e:
+                        st.warning(f"{_mod_labels.get(_mk,_mk)}: {_e}")
+                _progress.progress(1.0, text="Tamamlandı ✅")
+                _persist_user_data(_current_user, _projects(),
+                                   st.session_state.get(_user_key("current_project"), ""))
+                st.rerun()
+
+            # Bireysel seçim
+            _sel_missing = _col_sel.multiselect(
+                "Sadece bunlar için üret",
+                options=_missing_interp,
+                format_func=lambda x: _mod_labels.get(x,x),
+                key="ai_sel_modules"
+            )
+            if _sel_missing and st.button("🤖 Seçilenleri Üret", use_container_width=True,
+                                           key="ai_sel_run"):
+                _progress2 = st.progress(0, text="Başlıyor…")
+                for _i, _mk in enumerate(_sel_missing):
+                    _progress2.progress(_i / len(_sel_missing),
+                                        text=f"{_mod_labels.get(_mk,_mk)} yorumlanıyor…")
+                    try:
+                        _fn, _kw_fn = _INTERP_MAP[_mk]
+                        _kw = _kw_fn(analyses[_mk])
+                        _text = _run_interp(_mk, _fn, _kw)
+                        analyses[_mk]["interpretation"] = _text
+                        st.session_state[f"interp_{_mk}"] = _text
+                    except Exception as _e:
+                        st.warning(f"{_mod_labels.get(_mk,_mk)}: {_e}")
+                _progress2.progress(1.0, text="Tamamlandı ✅")
+                _persist_user_data(_current_user, _projects(),
+                                   st.session_state.get(_user_key("current_project"), ""))
+                st.rerun()
+        else:
+            st.success("✅ Tüm modüllerin AI yorumu mevcut.")
+
+    st.divider()
+
+    # ── Toplu / Executive Summary ──────────────────────────
+    ak = st.session_state.get("api_key","")
+    st.markdown('<div class="sec">📋 Toplu AI Raporu (Executive Summary)</div>',
+                unsafe_allow_html=True)
     exec_sum = proj.get("executive_summary","")
     if exec_sum:
         st.markdown(f'<div class="interp-box">{exec_sum.replace(chr(10),"<br>")}</div>',
                     unsafe_allow_html=True)
-        if st.button("🔄 Regenerate executive summary"):
+        if st.button("🔄 Yeniden üret"):
             exec_sum = ""
     if not exec_sum:
         if ak:
-            if st.button("🤖 Generate executive summary with Claude AI",
-                          use_container_width=True):
-                with st.spinner("Generating executive summary…"):
+            _has_all = not _missing_interp   # True ise tüm modüllerin yorumu var
+            _btn_lbl = ("🤖 Toplu Rapor Üret (tüm modüller dahil)"
+                        if _has_all else
+                        "🤖 Executive Summary Üret (mevcut verilerle)")
+            if st.button(_btn_lbl, use_container_width=True, key="exec_sum_btn"):
+                with st.spinner("Toplu rapor yazılıyor…"):
                     try:
-                        text = interpret_full_project(ak, proj)
+                        text = interpret_full_project(ak, proj,
+                                                      model=st.session_state.get(
+                                                          "ai_model","claude-opus-5-5"))
                         proj["executive_summary"] = text
+                        _persist_user_data(_current_user, _projects(),
+                                           st.session_state.get(
+                                               _user_key("current_project"), ""))
                         st.rerun()
                     except Exception as e:
                         st.error(str(e))
+            if not _has_all:
+                st.caption("💡 Önce tüm modüllerin AI yorumunu üretirseniz toplu rapor daha kapsamlı olur.")
         else:
-            proj_sum = st.text_area("Write your own executive summary (optional)",
+            proj_sum = st.text_area("Kendi özetinizi yazın (opsiyonel)",
                                      height=120, key="manual_exec_sum")
             if proj_sum.strip():
                 proj["executive_summary"] = proj_sum.strip()
