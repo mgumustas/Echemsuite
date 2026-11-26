@@ -477,7 +477,11 @@ with st.sidebar:
         "➕  Standard Addition",
         "📄  Report",
     ]
-    _NAV_KEY = f"nav_radio_{_current_user}"
+    _NAV_KEY     = f"nav_radio_{_current_user}"
+    _NAV_PENDING = f"nav_pending_{_current_user}"
+    # Buton tıklamasından gelen bekleyen navigasyonu radio'ya ÖNCE uygula
+    if _NAV_PENDING in st.session_state:
+        st.session_state[_NAV_KEY] = st.session_state.pop(_NAV_PENDING)
     page = st.radio(f"navigate_{_current_user}", label_visibility="collapsed",
                     options=_NAV_OPTIONS, key=_NAV_KEY)
 
@@ -665,7 +669,8 @@ def _synth_eis(Rs, Rct, Q, n_cpe, f_min=0.01, f_max=1e5, n_pts=50):
 # ═══════════════════════════════════════════════════════════
 if page == "🏠  Home":
     proj = _cur()
-    _NAV_KEY = f"nav_radio_{_current_user}"
+    _NAV_KEY     = f"nav_radio_{_current_user}"
+    _NAV_PENDING = f"nav_pending_{_current_user}"
 
     st.title(f"⚗️ {proj.get('name','My Study')}")
     st.caption(f"Created {proj.get('created','')}  ·  SilverstoneLab Echem Suite  ·  Welcome, {_current_name}")
@@ -725,7 +730,7 @@ if page == "🏠  Home":
   <div class="tile-desc">{_desc}</div>
 </div>""", unsafe_allow_html=True)
             if st.button(f"Open {_title}", key=f"home_nav_{_i}", use_container_width=True):
-                st.session_state[_NAV_KEY] = _nav
+                st.session_state[_NAV_PENDING] = _nav
                 st.rerun()
 
     st.write("")  # spacer
@@ -743,7 +748,7 @@ if page == "🏠  Home":
   <div class="tile-desc">{_desc}</div>
 </div>""", unsafe_allow_html=True)
             if st.button(f"Open {_title}", key=f"home_nav_{_i+3}", use_container_width=True):
-                st.session_state[_NAV_KEY] = _nav
+                st.session_state[_NAV_PENDING] = _nav
                 st.rerun()
 
 
