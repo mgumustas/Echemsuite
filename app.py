@@ -3222,6 +3222,9 @@ elif page == "🔬  Surface Characterization":
                                   placeholder="e.g. The modified electrode surface shows MWCNT tube structures and a Nafion film layer.")
         if _sem_note:
             st.info(f"📝 Note: {_sem_note}")
+        # Explicitly persist SEM upload state so other page sections can read it
+        st.session_state["has_sem_bare"] = _sem_bare is not None
+        st.session_state["has_sem_mod"]  = _sem_mod  is not None
 
     # ── EIS Nyquist ──────────────────────────────────────────
     with _surf_tabs[1]:
@@ -3421,8 +3424,8 @@ elif page == "🔬  Surface Characterization":
     if _sem_note_ai:
         _surf_ai_metrics["SEM observation"] = _sem_note_ai
     # SEM görüntüsü yüklenmiş ama not girilmemişse yine de metriğe ekle
-    _has_sem_bare = st.session_state.get("sem_bare_up") is not None
-    _has_sem_mod  = st.session_state.get("sem_mod_up")  is not None
+    _has_sem_bare = _sem_bare is not None
+    _has_sem_mod  = _sem_mod  is not None
     if (_has_sem_bare or _has_sem_mod) and "SEM observation" not in _surf_ai_metrics:
         _sem_imgs = []
         if _has_sem_bare: _sem_imgs.append("bare electrode")
@@ -3496,7 +3499,8 @@ elif page == "📄  Report":
             _has_data = (st.session_state.get("rct_bare", 0) > 0
                          or st.session_state.get("surf_ipa_bare", 0) > 0
                          or bool(st.session_state.get("sem_note", ""))
-                         or st.session_state.get("sem_bare_up") is not None)
+                         or st.session_state.get("has_sem_bare", False)
+                         or st.session_state.get("has_sem_mod",  False))
         else:
             _has_data = bool(st.session_state.get(_data_key))
         if not _has_data:
