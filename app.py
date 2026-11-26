@@ -219,7 +219,8 @@ def _cur() -> dict:
 def _save_analysis(key: str, metrics: dict,
                    plot_dir: str | None = None,
                    param_df=None,
-                   interpretation: str = ""):
+                   interpretation: str = "",
+                   notes: str = ""):
     proj = _cur()
     if not proj: return
     plot_bytes = []
@@ -231,11 +232,27 @@ def _save_analysis(key: str, metrics: dict,
         "plot_bytes":     plot_bytes,
         "param_df_str":   param_df.to_string() if param_df is not None else "",
         "interpretation": interpretation,
+        "notes":          notes,
         "timestamp":      datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
     # Auto-persist to disk after every analysis save
     _persist_user_data(_current_user, _projects(),
                        st.session_state.get(_user_key("current_project"), ""))
+
+
+def _analysis_notes_widget(key: str) -> str:
+    """Render a compact notes textarea for the given module key; return current value."""
+    _existing = _cur().get("analyses", {}).get(key, {}).get("notes", "")
+    _note_val = st.text_area(
+        "📝 Analysis notes (optional)",
+        value=st.session_state.get(f"anote_{key}", _existing),
+        key=f"anote_{key}_widget",
+        height=68,
+        placeholder="Lab conditions, observations, deviations from protocol…",
+        help="Stored with this analysis. Visible in project summary and exported ZIP.",
+    )
+    st.session_state[f"anote_{key}"] = _note_val
+    return _note_val
 
 _init_state()
 
@@ -380,10 +397,40 @@ with st.sidebar:
             st.caption("Current users:")
             try:
                 cfg3 = _load_config()
-                for uname, udata in cfg3["credentials"]["usernames"].items():
+                _all_users = list(cfg3["credentials"]["usernames"].items())
+                for uname, udata in _all_users:
                     role = udata.get("role","user")
                     badge = "👑" if role=="admin" else "👤"
-                    st.markdown(f"- {badge} **{uname}** ({udata.get('name','')})")
+                    _uc1, _uc2, _uc3 = st.columns([3, 2, 2])
+                    _uc1.markdown(f"{badge} **{uname}** ({udata.get('name','')})")
+                    # Change role button (don't allow demoting yourself)
+                    if uname != _current_user:
+                        _new_role = "user" if role == "admin" else "admin"
+                        _role_lbl = "→ User" if role == "admin" else "→ Admin"
+                        if _uc2.button(_role_lbl, key=f"adm_role_{uname}", use_container_width=True):
+                            try:
+                                _cfg_r = _load_config()
+                                _cfg_r["credentials"]["usernames"][uname]["role"] = _new_role
+                                _save_config(_cfg_r)
+                                st.success(f"✅ {uname} is now '{_new_role}'. Effective after re-login.")
+                                st.rerun()
+                            except Exception as _re:
+                                st.error(str(_re))
+                        if _uc3.button("🗑 Remove", key=f"adm_del_{uname}", use_container_width=True):
+                            if st.session_state.get(f"adm_del_confirm_{uname}"):
+                                try:
+                                    _cfg_d = _load_config()
+                                    del _cfg_d["credentials"]["usernames"][uname]
+                                    _save_config(_cfg_d)
+                                    st.success(f"✅ User '{uname}' removed.")
+                                    st.rerun()
+                                except Exception as _de:
+                                    st.error(str(_de))
+                            else:
+                                st.session_state[f"adm_del_confirm_{uname}"] = True
+                                st.warning(f"⚠️ Click 🗑 Remove again to confirm deleting '{uname}'.")
+                    else:
+                        _uc2.caption("(you)")
             except Exception:
                 pass
 
@@ -874,6 +921,56 @@ if page == "🏠  Home":
                     st.session_state[_NAV_PENDING] = _nav
                     st.rerun()
 
+    # ── Project analysis summary ──────────────────────────────
+    _home_proj = _cur()
+    _home_analyses = _home_proj.get("analyses", {})
+    if _home_analyses:
+        st.write("")
+        st.markdown('<div class="sec">📋 Project Analysis Summary</div>', unsafe_allow_html=True)
+        _MOD_LABELS = {
+            "cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
+            "cal":"📊 Calibration","sa":"➕ Std Addition",
+            "sel":"🧬 Selectivity","stab":"📅 Stability","surf":"🔬 Surface Charact."
+        }
+        # Key metrics to surface per module
+        _HIGHLIGHT_KEYS = {
+            "cv":   ["ECSA (cm²)", "k0 (cm/s)"],
+            "eis":  ["Rct (Ω)", "Rs (Ω)"],
+            "ph":   ["Slope (mV/pH)", "R²"],
+            "cal":  ["LOD (µM)", "LOQ (µM)", "R²"],
+            "sa":   ["Determined concentration (µM)", "Recovery (%)"],
+            "sel":  [],
+            "stab": ["Last % Recovery", "Min. threshold"],
+            "surf": [],
+        }
+        _sum_cols = st.columns(min(len(_home_analyses), 4), gap="small")
+        for _si, (_mk, _ma) in enumerate(_home_analyses.items()):
+            with _sum_cols[_si % 4]:
+                _has_interp = bool(_ma.get("interpretation",""))
+                _lbl = _MOD_LABELS.get(_mk, _mk)
+                _ts  = _ma.get("timestamp","")[:10] if _ma.get("timestamp") else ""
+                _note_flag = "📝 " if _ma.get("notes","") else ""
+                _ai_flag   = "🤖 " if _has_interp else ""
+                st.markdown(f"""<div style='border:1px solid #c8d8e8;border-radius:8px;padding:10px 12px;background:#f7fafd;margin-bottom:8px'>
+<b>{_lbl}</b><br><small style='color:#666'>{_ts} {_ai_flag}{_note_flag}</small>""",
+                            unsafe_allow_html=True)
+                _mets = _ma.get("metrics", {})
+                _shown = 0
+                for _hk in _HIGHLIGHT_KEYS.get(_mk, []):
+                    _v = _mets.get(_hk)
+                    if _v is not None:
+                        st.caption(f"**{_hk}:** {_v}")
+                        _shown += 1
+                        if _shown >= 2:
+                            break
+                if _shown == 0 and _mets:
+                    # Fallback: first two scalar metrics
+                    for _fk, _fv in _mets.items():
+                        if isinstance(_fv, (int, float, str)) and _shown < 2:
+                            st.caption(f"**{_fk}:** {_fv}")
+                            _shown += 1
+                st.markdown("</div>", unsafe_allow_html=True)
+
 
 # ═══════════════════════════════════════════════════════════
 # 📈  CV
@@ -995,7 +1092,8 @@ elif page == "📈  CV — Scan Rate Study":
                 m2.metric("R²",         metrics["ECSA R²"])
                 m3.metric("b value",    f"{b:.4f}  ({lbl})")
                 m4.metric("k° (cm/s)",  metrics["k° (cm/s)"])
-                _save_analysis("cv", metrics, out)
+                _cv_notes = _analysis_notes_widget("cv")
+                _save_analysis("cv", metrics, out, notes=_cv_notes)
                 _metrics_csv_btn(metrics, "cv_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>', unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"cv_analysis.zip")
@@ -1137,7 +1235,8 @@ elif page == "🔵  EIS — Impedance":
                         except Exception:
                             pass
                     _eis_metrics["electrodes"] = list(file_dict.keys())
-                _save_analysis("eis", _eis_metrics, out, param_df=param_df)
+                _eis_notes = _analysis_notes_widget("eis")
+                _save_analysis("eis", _eis_metrics, out, param_df=param_df, notes=_eis_notes)
                 _metrics_csv_btn({k:v for k,v in _eis_metrics.items() if k != "electrodes"}, "eis_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"eis_analysis.zip")
@@ -1236,7 +1335,8 @@ elif page == "🧪  pH — Working pH":
                 m2.metric("R²",metrics["R²"])
                 m3.metric("m/n ratio",metrics["m/n ratio"])
                 m4.metric("Optimal pH",metrics["Optimal pH"])
-                _save_analysis("ph",metrics,out)
+                _ph_notes = _analysis_notes_widget("ph")
+                _save_analysis("ph",metrics,out, notes=_ph_notes)
                 _metrics_csv_btn(metrics, "ph_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"ph_analysis.zip")
@@ -2203,6 +2303,54 @@ elif page == "📊  Calibration & LOD/LOQ":
                 st.caption(f"Calibration: slope={_slope:.4f} µA/{conc_unit} | "
                            f"LOD={_lod:.4g} | LOQ={_loq:.4g} {conc_unit} | "
                            f"r={_r:.5f} | Range: {_cmin:.4g}–{_cmax:.4g} {conc_unit}")
+
+                # ── Plotly interactive calibration curve ────────────
+                try:
+                    import plotly.graph_objects as _pgo
+                    _fit_x = np.linspace(_cmin, _cmax, 200)
+                    _fit_y = _slope * _fit_x + _intercept
+                    _fig_pl = _pgo.Figure()
+                    # Data points
+                    _fig_pl.add_trace(_pgo.Scatter(
+                        x=_c_arr.tolist(), y=_i_arr.tolist(),
+                        mode="markers",
+                        marker=dict(size=10, color="#1f77b4", symbol="circle"),
+                        name="Data",
+                        hovertemplate=(f"C = %{{x:.4g}} {conc_unit}<br>"
+                                       "ip = %{y:.4f} µA<extra></extra>"),
+                    ))
+                    # Regression line
+                    _fig_pl.add_trace(_pgo.Scatter(
+                        x=_fit_x.tolist(), y=_fit_y.tolist(),
+                        mode="lines",
+                        line=dict(color="#e74c3c", width=2, dash="solid"),
+                        name=f"Fit  r={_r:.4f}",
+                        hovertemplate=(f"C = %{{x:.4g}} {conc_unit}<br>"
+                                       "ip(fit) = %{y:.4f} µA<extra></extra>"),
+                    ))
+                    # LOD / LOQ vertical lines
+                    for _lv, _lname, _lc in [(_lod,"LOD","#f39c12"), (_loq,"LOQ","#27ae60")]:
+                        if _cmin <= _lv <= _cmax:
+                            _fig_pl.add_vline(x=_lv, line_dash="dot",
+                                              line_color=_lc, opacity=0.7,
+                                              annotation_text=f"{_lname}={_lv:.3g}",
+                                              annotation_position="top right")
+                    _fig_pl.update_layout(
+                        title=dict(text=f"{analyte} — Calibration Curve (interactive)",
+                                   font=dict(size=14)),
+                        xaxis_title=f"Concentration ({conc_unit})",
+                        yaxis_title="Peak current ip (µA)",
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                        height=400,
+                        margin=dict(l=50, r=20, t=60, b=50),
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(_fig_pl, use_container_width=True)
+                except ImportError:
+                    st.caption("💡 Install plotly (`pip install plotly`) for an interactive chart.")
+                except Exception as _pe:
+                    st.caption(f"Plotly chart skipped: {_pe}")
+
                 # Session state'e kaydet — Accuracy tablosunda kullanmak için
                 st.session_state["qc_points"] = {
                     "slope": _slope, "intercept": _intercept,
@@ -2414,7 +2562,8 @@ elif page == "📊  Calibration & LOD/LOQ":
                 m2.metric("LOQ",metrics["LOQ"])
                 m3.metric("r",  metrics["r"])
                 m4.metric("Slope",metrics["Slope"])
-                _save_analysis("cal",metrics,out)
+                _cal_notes = _analysis_notes_widget("cal")
+                _save_analysis("cal",metrics,out, notes=_cal_notes)
                 _metrics_csv_btn(metrics, "calibration_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"calibration.zip")
@@ -2501,7 +2650,8 @@ elif page == "➕  Standard Addition":
                 m1.metric(f"C_sample ({sa_cu})",metrics[f"C_sample ({sa_cu})"])
                 m2.metric("R²",metrics["R²"])
                 m3.metric("Slope",metrics["Slope"])
-                _save_analysis("sa",metrics,out)
+                _sa_notes = _analysis_notes_widget("sa")
+                _save_analysis("sa",metrics,out, notes=_sa_notes)
                 _metrics_csv_btn(metrics, "standard_addition_metrics.csv")
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"standard_addition.zip")
@@ -2976,11 +3126,14 @@ elif page == "📄  Report":
     _missing_interp = []
     for k, a in analyses.items():
         interp = a.get("interpretation","")
+        _note_badge = " 📝" if a.get("notes","") else ""
         if interp:
-            st.markdown(f"- 🤖 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ✅ *AI interpretation available*")
+            st.markdown(f"- 🤖 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ✅ *AI interpretation available*{_note_badge}")
         else:
-            st.markdown(f"- 📊 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ⚪ *No AI interpretation*")
+            st.markdown(f"- 📊 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ⚪ *No AI interpretation*{_note_badge}")
             _missing_interp.append(k)
+        if a.get("notes",""):
+            st.caption(f"  📝 _{a['notes'][:120]}{'…' if len(a.get('notes','')) > 120 else ''}_")
 
     st.divider()
 
@@ -3300,6 +3453,60 @@ elif page == "📄  Report":
                 except Exception as e:
                     st.error(str(e))
                     import traceback; st.code(traceback.format_exc())
+
+    st.divider()
+
+    # ── Project ZIP export ────────────────────────────────────
+    st.markdown('<div class="sec">📦 Export Project Data</div>', unsafe_allow_html=True)
+    st.caption("Download all analysis metrics and embedded plots from this project as a single ZIP archive.")
+    if st.button("📦 Download Project ZIP", use_container_width=False, key="proj_zip_btn"):
+        import zipfile as _zf, io as _zio, json as _zjson
+        _zip_buf = _zio.BytesIO()
+        _proj_name_safe = re.sub(r"[^\w\-]","_", proj.get("name","project"))[:40]
+        _date_str_zip = datetime.date.today().strftime("%Y%m%d")
+        with _zf.ZipFile(_zip_buf, "w", _zf.ZIP_DEFLATED) as _zzip:
+            # 1. Project metadata as JSON (no raw plot bytes — keep it readable)
+            _meta = {k: v for k, v in proj.items() if k != "analyses"}
+            _analyses_clean = {}
+            for _zk, _za in analyses.items():
+                _analyses_clean[_zk] = {kk: vv for kk, vv in _za.items()
+                                         if kk not in ("plot_bytes",)}
+            _meta["analyses"] = _analyses_clean
+            _zzip.writestr(
+                f"{_proj_name_safe}_metrics.json",
+                _zjson.dumps(_meta, ensure_ascii=False, indent=2)
+            )
+            # 2. Metrics CSV per module
+            for _zk, _za in analyses.items():
+                _zm = _za.get("metrics", {})
+                if _zm:
+                    _zcsv = "Metric,Value\n" + "".join(
+                        f"{str(k).replace(',','')},{str(v).replace(',','')}\n"
+                        for k, v in _zm.items()
+                        if isinstance(v, (int, float, str))
+                    )
+                    _zzip.writestr(f"{_zk}_metrics.csv", _zcsv)
+            # 3. Plot PNGs per module
+            for _zk, _za in analyses.items():
+                for _pi, _pb in enumerate(_za.get("plot_bytes", []) or []):
+                    if isinstance(_pb, bytes) and _pb:
+                        _zzip.writestr(f"{_zk}_plot_{_pi+1}.png", _pb)
+            # 4. AI interpretations as text
+            _interp_txt = ""
+            for _zk, _za in analyses.items():
+                _zi = _za.get("interpretation","")
+                if _zi:
+                    _interp_txt += f"=== {_mod_labels.get(_zk,_zk)} ===\n{_zi}\n\n"
+            if _interp_txt:
+                _zzip.writestr("ai_interpretations.txt", _interp_txt)
+        _zip_buf.seek(0)
+        st.download_button(
+            "⬇ Download ZIP",
+            data=_zip_buf.getvalue(),
+            file_name=f"{_proj_name_safe}_{_date_str_zip}.zip",
+            mime="application/zip",
+            use_container_width=True,
+        )
 
     st.divider()
     st.caption(
