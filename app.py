@@ -820,8 +820,11 @@ def _csv_preview(uploaded_file, n_rows: int = 5, key_prefix: str = "prev"):
 
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                       result_key: str = "interpretation",
-                      btn_key: str = None):
-    """Renders the 🤖 Interpret button and shows/saves commentary."""
+                      btn_key: str = None,
+                      images: list = None):
+    """Renders the 🤖 Interpret button and shows/saves commentary.
+    images: optional list of Streamlit UploadedFile objects (for vision-capable models).
+    """
     _provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
 
     # Resolve active key and model
@@ -847,12 +850,16 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                  use_container_width=True, key=_btn_key):
         with st.spinner(f"Consulting the electrochemistry expert via {_provider_label}…"):
             try:
+                _imgs = [img for img in (images or []) if img is not None]
                 if _provider == "ChatGPT (OpenAI)":
-                    text = _call_openai(_active_key, _active_model, interp_fn, fn_kwargs)
+                    text = _call_openai(_active_key, _active_model, interp_fn, fn_kwargs,
+                                        images=_imgs)
                 elif _provider == "Gemini (Google)":
-                    text = _call_gemini(_active_key, _active_model, interp_fn, fn_kwargs)
+                    text = _call_gemini(_active_key, _active_model, interp_fn, fn_kwargs,
+                                        images=_imgs)
                 else:
-                    text = interp_fn(api_key=_active_key, model=_active_model, **fn_kwargs)
+                    text = _call_claude_vision(_active_key, _active_model, interp_fn, fn_kwargs,
+                                               images=_imgs)
                 proj = _cur()
                 if module_key in proj.get("analyses", {}):
                     proj["analyses"][module_key]["interpretation"] = text
@@ -872,20 +879,35 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
 
 
 # ═══════════════════════════════════════════════════════════
-# AI PROVIDER BRIDGES  (OpenAI · Gemini)
+# VISION HELPER
 # ═══════════════════════════════════════════════════════════
-def _call_openai(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
+def _images_to_b64(images: list) -> list:
+    """Convert UploadedFile list → list of (b64_str, mime_type) tuples."""
+    import base64, imghdr
+    result = []
+    for img in images:
+        img.seek(0)
+        raw = img.read()
+        img.seek(0)
+        hdr = imghdr.what(None, h=raw)
+        mime = {"jpeg":"image/jpeg","jpg":"image/jpeg","png":"image/png",
+                "tiff":"image/tiff","gif":"image/gif"}.get(hdr or "", "image/png")
+        result.append((base64.b64encode(raw).decode(), mime))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════
+# AI PROVIDER BRIDGES  (Claude · OpenAI · Gemini)
+# ═══════════════════════════════════════════════════════════
+def _call_openai(api_key: str, model: str, interp_fn, fn_kwargs: dict,
+                 images: list = None) -> str:
     """Bridge: build the same user prompt via interp_fn dummy, then call OpenAI."""
     try:
         import openai as _oai
     except ImportError:
         return ("⚠️ 'openai' package not installed.\n"
                 "Add `openai>=1.0` to requirements.txt and redeploy.")
-    # Reuse the prompt by calling _build_prompt if available, else call with dummy key
-    # We call interp_fn with a placeholder key to get the prompt; we override the call
     from ai_interpreter import _SYSTEM
-    # Build the user message by temporarily capturing what interp_fn would send
-    # Simpler: directly call interp_fn but patch _call to return the prompt
     import ai_interpreter as _ai
     _orig_call = _ai._call
     _captured_prompt = {}
@@ -898,19 +920,31 @@ def _call_openai(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
     finally:
         _ai._call = _orig_call
     if "__captured__" not in str(result) and result != "__captured__":
-        return result  # interp_fn short-circuited (no data)
+        return result
     user_msg = _captured_prompt.get("msg", "Interpret the electrochemical data provided.")
     client = _oai.OpenAI(api_key=api_key)
+    # Build user content — add images if provided (gpt-4o and later support vision)
+    if images:
+        b64_imgs = _images_to_b64(images)
+        user_content = [{"type": "text", "text": user_msg}]
+        for b64, mime in b64_imgs:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}", "detail": "high"}
+            })
+    else:
+        user_content = user_msg
     resp = client.chat.completions.create(
-        model=model, max_tokens=1024,
-        messages=[{"role":"system","content":_SYSTEM},
-                  {"role":"user","content":user_msg}]
+        model=model, max_tokens=1500,
+        messages=[{"role": "system", "content": _SYSTEM},
+                  {"role": "user",   "content": user_content}]
     )
     return resp.choices[0].message.content.strip()
 
 
-def _call_gemini(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
-    """Bridge: build prompt via interp_fn, then call Google Gemini."""
+def _call_gemini(api_key: str, model: str, interp_fn, fn_kwargs: dict,
+                 images: list = None) -> str:
+    """Bridge: build prompt via interp_fn, then call Google Gemini (with optional vision)."""
     try:
         import google.generativeai as _genai
     except ImportError:
@@ -932,12 +966,66 @@ def _call_gemini(api_key: str, model: str, interp_fn, fn_kwargs: dict) -> str:
         return result
     user_msg = _captured_prompt.get("msg", "Interpret the electrochemical data provided.")
     _genai.configure(api_key=api_key)
-    _model = _genai.GenerativeModel(
-        model_name=model,
-        system_instruction=_SYSTEM
-    )
-    resp = _model.generate_content(user_msg)
+    _gmodel = _genai.GenerativeModel(model_name=model, system_instruction=_SYSTEM)
+    if images:
+        import io
+        from PIL import Image as _PILImage
+        content_parts = [user_msg]
+        for img_file in images:
+            img_file.seek(0)
+            pil_img = _PILImage.open(io.BytesIO(img_file.read()))
+            img_file.seek(0)
+            content_parts.append(pil_img)
+        resp = _gmodel.generate_content(content_parts)
+    else:
+        resp = _gmodel.generate_content(user_msg)
     return resp.text.strip()
+
+
+def _call_claude_vision(api_key: str, model: str, interp_fn, fn_kwargs: dict,
+                        images: list = None) -> str:
+    """Call Claude directly — with optional SEM image attachments (vision)."""
+    if not images:
+        # No images: use the standard interp_fn path
+        return interp_fn(api_key=api_key, model=model, **fn_kwargs)
+    # With images: build a messages-style request using the Anthropic SDK directly
+    try:
+        import anthropic as _ant
+    except ImportError:
+        return ("⚠️ 'anthropic' package not installed.")
+    from ai_interpreter import _SYSTEM
+    import ai_interpreter as _ai
+    # Capture the text prompt
+    _orig_call = _ai._call
+    _captured_prompt = {}
+    def _capture(ak, msg, mdl=""):
+        _captured_prompt["msg"] = msg
+        return "__captured__"
+    _ai._call = _capture
+    try:
+        result = interp_fn(api_key="__dummy__", model="__dummy__", **fn_kwargs)
+    finally:
+        _ai._call = _orig_call
+    if "__captured__" not in str(result) and result != "__captured__":
+        return result
+    user_msg = _captured_prompt.get("msg", "Interpret the electrochemical data provided.")
+    # Build multimodal content
+    b64_imgs = _images_to_b64(images)
+    user_content = []
+    for b64, mime in b64_imgs:
+        user_content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": mime, "data": b64}
+        })
+    user_content.append({"type": "text", "text": user_msg})
+    client = _ant.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=1500,
+        system=_SYSTEM,
+        messages=[{"role": "user", "content": user_content}]
+    )
+    return resp.content[0].text.strip()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -3473,6 +3561,9 @@ elif page == "🔬  Surface Characterization":
         with st.expander("📊 Metrics sent to AI", expanded=False):
             for _k, _v in _surf_ai_metrics.items():
                 st.write(f"**{_k}:** {_v}")
+        _surf_sem_files = [img for img in [_sem_bare, _sem_mod] if img is not None]
+        if _surf_sem_files:
+            st.caption(f"🖼️ {len(_surf_sem_files)} SEM görüntüsü AI'ya gönderilecek")
         _ai_interpret_btn(
             "surf",
             interpret_surface,
@@ -3480,6 +3571,7 @@ elif page == "🔬  Surface Characterization":
              "electrode_name": st.session_state.get("surf_electrode", "Modified Electrode")},
             result_key="surf_interp",
             btn_key="ai_surf_inline",
+            images=_surf_sem_files,
         )
         if st.session_state.get("surf_interp"):
             st.markdown("#### 📝 AI Commentary")
