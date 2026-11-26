@@ -280,16 +280,32 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     ip = np.array(peak_currents_A)
     nu_sqrt = np.sqrt(nu)
 
-    if len(nu_sqrt) < 2:
+    n_loaded   = len(cv_data)      # number of files actually loaded
+    n_detected = len(nu_sqrt)      # number with a valid peak current
+
+    if n_detected < 2:
+        # Build a more precise diagnosis
+        if n_loaded < 2:
+            cause = (
+                f"Yalnızca {n_loaded} tarama hızı dosyası yüklendi. "
+                f"Randles-Ševčík analizi için en az 2 farklı tarama hızına ihtiyaç vardır.\n\n"
+                f"💡 Çözüm: Tüm tarama hızı CSV dosyalarını aynı anda yükleyin\n"
+                f"   (örn. cv_10mVs.csv, cv_25mVs.csv, cv_50mVs.csv … hepsini birlikte seçin)."
+            )
+        else:
+            cause = (
+                f"{n_loaded} dosya yüklendi fakat yalnızca {n_detected} tanesinde "
+                f"anodik pik tespit edilebildi.\n\n"
+                f"Olası nedenler:\n"
+                f"• CSV sütun adları beklenenden farklı (beklenen: 'Potential'/'Current')\n"
+                f"• Pikler çok geniş veya gürültülü — algoritma tespit edemiyor\n"
+                f"• Anodik pik yok ya da negatif akım bölgesinde (katodik sistem?)\n"
+                f"  → Katodik pik analizi için 'use_anodic=False' parametresini deneyin"
+            )
         raise ValueError(
-            f"Randles-Ševčík analizi için en az 2 geçerli anodik pik gerekli "
-            f"(bulunan: {len(nu_sqrt)}). CV verilerinde otomatik pik tespit "
-            f"edilemedi.\n\n"
-            f"Olası nedenler:\n"
-            f"• CSV sütun adları beklenenden farklı (beklenen: 'Potential'/'Current')\n"
-            f"• Tarama hızı başlıkları okunmuyor (örn. '50mVs' yerine '50')\n"
-            f"• Pikler çok geniş veya gürültülü — algoritma tespit edemiyor\n"
-            f"• Anodik pik yok ya da negatif akım bölgesinde"
+            f"Randles-Ševčík analizi için en az 2 geçerli pik gerekli "
+            f"(tespit edilen: {n_detected} / yüklenen: {n_loaded}).\n\n"
+            + cause
         )
 
     # Lineer fit: ip = m × ν^(1/2)
@@ -386,9 +402,13 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.', plot_style=Non
         df = cv_data[rate]
         p = find_cv_peaks(df)
         ip = p['ipa'] if use_anodic else abs(p['ipc'])
-        if not np.isnan(ip) and ip > 0:
+        if not np.isnan(ip) and ip != 0:
             rates.append(rate / 1000)  # V/s
-            ip_vals.append(ip)
+            ip_vals.append(abs(ip))    # abs: cathodic systems return negative ipa
+
+    if len(rates) < 2:
+        print(f"  ⚠ Mekanizma analizi için yeterli veri yok (bulunan: {len(rates)})")
+        return {'slope_b': np.nan, 'R2': np.nan, 'mechanism': 'Yetersiz veri'}
 
     log_nu = np.log10(np.array(rates))
     log_ip = np.log10(np.array(ip_vals))
