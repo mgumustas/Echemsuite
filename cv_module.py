@@ -231,6 +231,18 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     ip = np.array(peak_currents_A)
     nu_sqrt = np.sqrt(nu)
 
+    if len(nu_sqrt) < 2:
+        raise ValueError(
+            f"Randles-Ševčík analizi için en az 2 geçerli anodik pik gerekli "
+            f"(bulunan: {len(nu_sqrt)}). CV verilerinde otomatik pik tespit "
+            f"edilemedi.\n\n"
+            f"Olası nedenler:\n"
+            f"• CSV sütun adları beklenenden farklı (beklenen: 'Potential'/'Current')\n"
+            f"• Tarama hızı başlıkları okunmuyor (örn. '50mVs' yerine '50')\n"
+            f"• Pikler çok geniş veya gürültülü — algoritma tespit edemiyor\n"
+            f"• Anodik pik yok ya da negatif akım bölgesinde"
+        )
+
     # Lineer fit: ip = m × ν^(1/2)
     slope, intercept, r, p_val, se = stats.linregress(nu_sqrt, ip)
     r_sq = r**2
