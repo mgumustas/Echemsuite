@@ -561,7 +561,8 @@ def _input_mode(key):
                     horizontal=True, key=key)
 
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
-                      result_key: str = "interpretation"):
+                      result_key: str = "interpretation",
+                      btn_key: str = None):
     """Renders the 🤖 Interpret button and shows/saves commentary."""
     _provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
 
@@ -583,8 +584,9 @@ def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
         st.info(f"🤖 Add your {_provider_label} API key in the sidebar to enable AI interpretation.")
         return
 
+    _btn_key = btn_key if btn_key else f"ai_{module_key}"
     if st.button(f"🤖 Generate AI Interpretation ({_provider_label})",
-                 use_container_width=True, key=f"ai_{module_key}"):
+                 use_container_width=True, key=_btn_key):
         with st.spinner(f"Consulting the electrochemistry expert via {_provider_label}…"):
             try:
                 if _provider == "ChatGPT (OpenAI)":
@@ -1116,21 +1118,168 @@ elif page == "📊  Calibration & LOD/LOQ":
         col_dl, col_up2 = st.columns([1, 1])
         with col_dl:
             st.markdown("**1 · Şablonu İndir**")
-            _tpl_path = os.path.join(os.path.dirname(__file__),
-                                     "SilverstoneLab_Validation_Template.xlsx")
-            if os.path.exists(_tpl_path):
-                with open(_tpl_path, "rb") as _f:
-                    st.download_button(
-                        "⬇️ Şablonu İndir (.xlsx)",
-                        data=_f.read(),
-                        file_name="SilverstoneLab_Validation_Template.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument"
-                              ".spreadsheetml.sheet",
-                        use_container_width=True,
-                    )
-                st.caption("README sekmesini okuyun · Yeşil satırlar örnek, sarı satırlara kendi verilerinizi girin · Sekme isimlerini değiştirmeyin.")
-            else:
-                st.warning("Şablon dosyası bulunamadı. Yönetici ile iletişime geçin.")
+
+            @st.cache_data(show_spinner=False)
+            def _build_template_bytes():
+                """Şablonu bellekte üret ve bytes olarak döndür (Streamlit Cloud uyumlu)."""
+                import io, openpyxl
+                from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+                from openpyxl.utils import get_column_letter
+
+                BLUE_H = "1F4E79"; BLUE_L = "BDD7EE"
+                GREEN  = "E2EFDA"; YELLOW = "FFEB9C"
+
+                def _tb():
+                    s = Side(style="thin", color="BFBFBF")
+                    return Border(left=s, right=s, top=s, bottom=s)
+
+                def _hdr(ws, row, vals):
+                    for col, v in enumerate(vals, 1):
+                        c = ws.cell(row=row, column=col, value=v)
+                        c.font      = Font(bold=True, color="FFFFFF", size=10)
+                        c.fill      = PatternFill("solid", fgColor=BLUE_H)
+                        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                        c.border    = _tb()
+                    ws.row_dimensions[row].height = 24
+
+                def _dat(ws, row, vals, fill=GREEN):
+                    for col, v in enumerate(vals, 1):
+                        c = ws.cell(row=row, column=col, value=v)
+                        c.font      = Font(size=10)
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                        c.fill      = PatternFill("solid", fgColor=fill)
+                        c.border    = _tb()
+
+                def _cw(ws, widths):
+                    for i, w in enumerate(widths, 1):
+                        ws.column_dimensions[get_column_letter(i)].width = w
+
+                wb = openpyxl.Workbook()
+
+                # README
+                ws = wb.active; ws.title = "README"
+                _cw(ws, [28, 72])
+                readme = [
+                    ("SilverstoneLab Echem Suite",
+                     "ICH Q2(R2) Toplu Validasyon Şablonu  –  v1.0"),
+                    ("", ""),
+                    ("KULLANIM TALİMATI", ""),
+                    ("1. Doldurun", "Yeşil satırları rehber alın, sarı satırlara kendi verilerinizi girin."),
+                    ("2. Kaydedin", ".xlsx olarak kaydedin, sekme isimlerini değiştirmeyin."),
+                    ("3. Yükleyin", "Uygulamada 'Toplu Validasyon → Doldurulmuş şablonu yükle' bölümüne sürükleyin."),
+                    ("4. Çalıştırın", "'Tüm Validasyonu Çalıştır' butonuyla tek seferde tüm hesaplamalar yapılır."),
+                    ("", ""),
+                    ("SEKME AÇIKLAMALARI", ""),
+                    ("Calibration",     "Konsantrasyon (A sütunu) + tekrar ip ölçümleri (B, C, … sütunları). Min. 5 seviye."),
+                    ("Repeatability",   "Seviye | Konsantrasyon_uM | ip_uA — her seviye için ≥ 6 satır."),
+                    ("Inter_Precision", "Gun | Seviye | Konsantrasyon_uM | ip_uA — en az 3 farklı gün."),
+                    ("Accuracy",        "QC_Seviyesi | Nominal_uM | Tekrar | ip_uA — LLOQ/LQC/MQC/HQC."),
+                    ("Std_Addition",    "Eklenen_uM | ip_uA — eklenen standart ve ölçülen akım."),
+                    ("", ""),
+                    ("RENK ANAHTARI", ""),
+                    ("🟢 Yeşil", "Örnek / referans verisi — silebilirsiniz."),
+                    ("🟡 Sarı",  "Sizin verilerinizi girin."),
+                    ("🔵 Mavi",  "Sütun başlıkları — değiştirmeyin."),
+                    ("", ""),
+                    ("ÖNEMLİ", "Tüm konsantrasyonlar µM, tüm akımlar µA olarak girilmelidir. Boş hücre bırakın (0 yazmayın)."),
+                ]
+                for r, (k, v) in enumerate(readme, 1):
+                    ck = ws.cell(row=r, column=1, value=k)
+                    cv = ws.cell(row=r, column=2, value=v)
+                    for c in (ck, cv):
+                        c.alignment = Alignment(vertical="center", wrap_text=True)
+                        ws.row_dimensions[r].height = 18
+                    if k == "SilverstoneLab Echem Suite":
+                        for c in (ck, cv):
+                            c.font = Font(bold=True, color="FFFFFF", size=13)
+                            c.fill = PatternFill("solid", fgColor=BLUE_H)
+                    elif k in ("KULLANIM TALİMATI", "SEKME AÇIKLAMALARI", "RENK ANAHTARI", "ÖNEMLİ"):
+                        for c in (ck, cv):
+                            c.font = Font(bold=True, color="1F4E79", size=11)
+                            c.fill = PatternFill("solid", fgColor=BLUE_L)
+                    elif k.startswith(("1.", "2.", "3.", "4.")):
+                        for c in (ck, cv):
+                            c.fill = PatternFill("solid", fgColor=GREEN)
+
+                # Calibration
+                ws2 = wb.create_sheet("Calibration"); _cw(ws2, [22,18,18,18])
+                _hdr(ws2, 1, ["Konsantrasyon_uM","ip_run1_uA","ip_run2_uA","ip_run3_uA"])
+                ws2.freeze_panes = "A2"
+                for r, row in enumerate([
+                    [0.1,0.281,0.277,0.285],[0.5,1.112,1.105,1.119],
+                    [1.0,2.157,2.149,2.165],[5.0,10.497,10.481,10.513],
+                    [10.0,20.922,20.904,20.941],[20.0,41.763,41.741,41.785],
+                    [40.0,83.448,83.421,83.476],[60.0,125.14,125.11,125.17],
+                    [80.0,166.83,166.80,166.86],[100.0,208.52,208.49,208.56],
+                ], 2):
+                    _dat(ws2, r, row)
+                for r in range(12, 16):
+                    _dat(ws2, r, [""]*4, fill=YELLOW)
+
+                # Repeatability
+                ws3 = wb.create_sheet("Repeatability"); _cw(ws3,[18,22,16])
+                _hdr(ws3, 1, ["Seviye","Konsantrasyon_uM","ip_uA"]); ws3.freeze_panes="A2"
+                _rep_ex = (
+                    [["Düşük",1.0,v] for v in [2.158,2.151,2.163,2.156,2.160,2.154]] +
+                    [["Orta",20.0,v] for v in [41.764,41.748,41.779,41.753,41.771,41.758]] +
+                    [["Yüksek",80.0,v] for v in [166.831,166.808,166.853,166.819,166.844,166.826]]
+                )
+                for r, row in enumerate(_rep_ex, 2):
+                    _dat(ws3, r, row)
+                for r in range(len(_rep_ex)+2, len(_rep_ex)+8):
+                    _dat(ws3, r, [""]*3, fill=YELLOW)
+
+                # Inter_Precision
+                ws4 = wb.create_sheet("Inter_Precision"); _cw(ws4,[14,18,22,16])
+                _hdr(ws4, 1, ["Gun","Seviye","Konsantrasyon_uM","ip_uA"]); ws4.freeze_panes="A2"
+                _ipr_ex = []
+                for gn in range(1,4):
+                    for sev, conc, base in [("Düşük",1.0,2.157),("Orta",20.0,41.763),("Yüksek",80.0,166.831)]:
+                        for i in range(3):
+                            _ipr_ex.append([f"Gün {gn}", sev, conc, round(base + (i-1)*0.012,3)])
+                for r, row in enumerate(_ipr_ex, 2):
+                    _dat(ws4, r, row)
+                for r in range(len(_ipr_ex)+2, len(_ipr_ex)+8):
+                    _dat(ws4, r, [""]*4, fill=YELLOW)
+
+                # Accuracy
+                ws5 = wb.create_sheet("Accuracy"); _cw(ws5,[16,16,12,16])
+                _hdr(ws5, 1, ["QC_Seviyesi","Nominal_uM","Tekrar","ip_uA"]); ws5.freeze_panes="A2"
+                _acc_ex = (
+                    [["LLOQ",0.14,i+1,round(0.373+(i-1)*0.004,4)] for i in range(3)] +
+                    [["LQC", 0.42,i+1,round(0.950+(i-1)*0.008,4)] for i in range(3)] +
+                    [["MQC", 1.75,i+1,round(3.721+(i-1)*0.015,4)] for i in range(3)] +
+                    [["HQC",80.0, i+1,round(166.83+(i-1)*0.120,4)] for i in range(3)]
+                )
+                for r, row in enumerate(_acc_ex, 2):
+                    _dat(ws5, r, row)
+                for r in range(len(_acc_ex)+2, len(_acc_ex)+6):
+                    _dat(ws5, r, [""]*4, fill=YELLOW)
+
+                # Std_Addition
+                ws6 = wb.create_sheet("Std_Addition"); _cw(ws6,[18,16])
+                _hdr(ws6, 1, ["Eklenen_uM","ip_uA"]); ws6.freeze_panes="A2"
+                for r, row in enumerate([
+                    [0.0,22.845],[2.0,27.019],[5.0,33.280],[10.0,43.714],[20.0,64.583],[40.0,106.321]
+                ], 2):
+                    _dat(ws6, r, row)
+                for r in range(8, 12):
+                    _dat(ws6, r, [""]*2, fill=YELLOW)
+
+                buf = io.BytesIO()
+                wb.save(buf)
+                buf.seek(0)
+                return buf.getvalue()
+
+            _tpl_bytes = _build_template_bytes()
+            st.download_button(
+                "⬇️ Şablonu İndir (.xlsx)",
+                data=_tpl_bytes,
+                file_name="SilverstoneLab_Validation_Template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+            st.caption("README sekmesini okuyun · Yeşil = örnek · Sarı = sizin veriniz · Sekme isimlerini değiştirmeyin.")
 
         with col_up2:
             st.markdown("**2 · Doldurulmuş Şablonu Yükle**")
@@ -1547,7 +1696,8 @@ elif page == "📊  Calibration & LOD/LOQ":
                     "language":          st.session_state.get("bulk_rep_lang","English"),
                 }
                 _ai_interpret_btn("cal", interpret_calibration, _ai_kwargs_bulk,
-                                  result_key="bulk_ai_text")
+                                  result_key="bulk_ai_text",
+                                  btn_key="ai_cal_bulk")
 
     left,right = st.columns([1,1])
     with left:
@@ -2111,14 +2261,16 @@ elif page == "📊  Calibration & LOD/LOQ":
                 st.markdown('<div class="sec">Plots</div>',unsafe_allow_html=True)
                 _show_imgs(out); _dl_btn(out,"calibration.zip")
                 _ai_interpret_btn("cal",interpret_calibration,
-                                   {"results":res,"analyte":analyte,"unit":conc_unit})
+                                   {"results":res,"analyte":analyte,"unit":conc_unit},
+                                   btn_key="ai_cal_run")
             except Exception as e:
                 st.error(str(e))
                 import traceback; st.code(traceback.format_exc())
     elif _cur().get("analyses",{}).get("cal"):
         a=_cur()["analyses"]["cal"]
         st.info(f"Previous calibration from {a.get('timestamp','')} stored.")
-        _ai_interpret_btn("cal",interpret_calibration,{"results":{},"analyte":analyte,"unit":conc_unit})
+        _ai_interpret_btn("cal",interpret_calibration,{"results":{},"analyte":analyte,"unit":conc_unit},
+                          btn_key="ai_cal_prev")
 
 
 # ═══════════════════════════════════════════════════════════
