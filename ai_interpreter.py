@@ -304,11 +304,23 @@ def interpret_full_project(api_key: str, project: dict, model: str = "claude-opu
     summary_block = "\n\n".join(sections)
     proj_name = project.get("name", "Untitled Project")
 
-    prompt = f"""You are writing the Abstract for a manuscript about the electrochemical
-sensor study titled "{proj_name}".
+    # Kayıtlı AI yorumlarını da ekle (varsa)
+    interp_block = []
+    for key in ("cv", "eis", "ph", "cal", "sa"):
+        if key in analyses:
+            saved_interp = analyses[key].get("interpretation", "").strip()
+            if saved_interp:
+                label = {"cv":"CV","eis":"EIS","ph":"pH","cal":"Calibration","sa":"Standard Addition"}[key]
+                interp_block.append(f"[{label} AI interpretation]\n{saved_interp[:600]}")
+    interp_section = ("\n\n".join(interp_block)
+                      if interp_block else "")
 
-Experimental results available:
+    prompt = f"""You are writing the Abstract and Discussion Summary for a manuscript
+about the electrochemical sensor study titled "{proj_name}".
+
+Quantitative experimental results:
 {summary_block}
+{"" if not interp_section else chr(10) + "Per-module AI interpretations (summaries):" + chr(10) + interp_section}
 
 Write exactly 3 paragraphs in the style required by Biosensors & Bioelectronics
 or Analytical Chemistry:
@@ -320,7 +332,7 @@ Paragraph 1 — Motivation and electrode design strategy (2–3 sentences):
 Paragraph 2 — Key electrochemical characterisation findings (3–4 sentences):
   Report the most important numbers: Rct changes from EIS (cite exact Ω values),
   ECSA and b-value from CV, pH dependence slope vs Nernst theory.
-  Use precise SI units throughout.
+  Use precise SI units throughout.{"" if not interp_section else " Incorporate insights from the per-module interpretations where they add nuance."}
 
 Paragraph 3 — Analytical performance and practical relevance (2–3 sentences):
   State LOD, LOQ, linear dynamic range, and sensitivity.
@@ -332,6 +344,6 @@ RULES:
 - Do NOT use bullet points or headers.
 - Quote every numeric value present in the data above.
 - If a value is missing, omit that parameter rather than saying "data not provided".
-- Total length: 180–220 words."""
+- Total length: {"220–280" if interp_section else "180–220"} words."""
 
     return _call(api_key, prompt, model)
