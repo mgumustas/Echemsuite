@@ -157,10 +157,10 @@ if _AUTH_AVAILABLE:
         <p style='color:#888;font-size:0.9rem'>Enter your credentials above to continue.</p>
         </div>""", unsafe_allow_html=True)
         _ka = st.checkbox(
-            "🔁 Oturumu açık tut (her 4 dk yenile)",
+            "🔁 Keep session alive (refresh every 4 min)",
             value=st.session_state.get("keep_alive", False),
             key="keep_alive_cb",
-            help="Giriş yaptıktan sonra da aktif kalır. Sayfa sessizce yenilenir, veri kaybı olmaz."
+            help="Stays active after login. The page refreshes silently — no data loss."
         )
         st.session_state["keep_alive"] = _ka
         if _ka:
@@ -271,11 +271,11 @@ with st.sidebar:
     if _AUTH_AVAILABLE:
         _authenticator.logout("🚪 Log out", location="sidebar")
     _keep_alive = st.checkbox(
-        "🔁 Oturumu açık tut",
+        "🔁 Keep session alive",
         value=st.session_state.get("keep_alive", False),
         key="keep_alive_cb",
-        help="İşaretli iken sayfa her 4 dakikada bir sessizce yenilenir; "
-             "oturum kapanmaz, veriler kaydedildiğinden kayıp olmaz."
+        help="When checked, the page refreshes silently every 4 minutes; "
+             "the session stays open and no data is lost."
     )
     st.session_state["keep_alive"] = _keep_alive
     if _keep_alive:
@@ -336,6 +336,31 @@ with st.sidebar:
                                f"{cp.get('name','project')}.json",
                                "application/json")
         st.caption("Plots stay in session memory only. Export is metadata + interpretations.")
+
+    with st.expander("🗑️ Delete project"):
+        cp = _cur()
+        cp_key = _user_key("current_project")
+        cur_pid = st.session_state.get(cp_key, "")
+        if cp:
+            st.warning(f"This will permanently delete **{cp.get('name', cur_pid)}** and all its analyses.")
+            confirm_del = st.checkbox("Yes, I want to delete this project", key="confirm_del_proj")
+            if st.button("🗑️ Delete project", disabled=not confirm_del, key="btn_del_proj",
+                         type="primary" if confirm_del else "secondary"):
+                projs = _projects()
+                projs.pop(cur_pid, None)
+                # Switch to another project if available, else create a blank default
+                remaining = list(projs.keys())
+                if remaining:
+                    st.session_state[cp_key] = remaining[0]
+                else:
+                    import uuid as _uuid
+                    new_pid = str(_uuid.uuid4())
+                    projs[new_pid] = {"name": "Default Project", "notes": "", "analyses": {}}
+                    st.session_state[cp_key] = new_pid
+                _persist_user_data(_current_user, _projects(), st.session_state[cp_key])
+                st.rerun()
+        else:
+            st.info("No active project selected.")
 
     # ── Admin panel ─────────────────────────────────────────
     if _current_role == "admin":
@@ -562,6 +587,16 @@ def _rate_from_name(n):
 def _input_mode(key):
     return st.radio("Data input", ["📁 Upload CSV", "✏️ Enter manually"],
                     horizontal=True, key=key)
+
+def _csv_template_btn(csv_text: str, file_name: str, label: str = "⬇️ Download CSV Template"):
+    """Render a small download button for a CSV template."""
+    st.download_button(
+        label=label,
+        data=csv_text.encode("utf-8"),
+        file_name=file_name,
+        mime="text/csv",
+        use_container_width=False,
+    )
 
 def _ai_interpret_btn(module_key: str, interp_fn, fn_kwargs: dict,
                       result_key: str = "interpretation",
@@ -837,6 +872,14 @@ elif page == "📈  CV — Scan Rate Study":
     tmpdir   = tempfile.mkdtemp()
 
     if cv_mode == "📁 Upload CSV":
+        _csv_template_btn(
+            "Potential_V,Current_A\n"
+            "-0.6,1.23e-6\n-0.5,8.45e-7\n-0.4,3.21e-7\n-0.3,-1.05e-7\n-0.2,-5.67e-7\n"
+            "-0.1,-9.12e-7\n0.0,-1.24e-6\n0.1,-1.45e-6\n0.2,-1.52e-6\n0.3,-1.41e-6\n"
+            "0.4,-1.18e-6\n0.5,-7.34e-7\n0.6,-2.11e-7\n",
+            "cv_template_50mVs.csv",
+            "⬇️ Download CV Template (name file e.g. cv_50mVs.csv)"
+        )
         cv_ups = st.file_uploader("CV files (one per scan rate)",
                                    type="csv", accept_multiple_files=True)
         rate_map = {}
@@ -924,11 +967,11 @@ elif page == "📈  CV — Scan Rate Study":
             except ValueError as e:
                 st.error(str(e))
                 st.markdown("""
-**CSV Formatı Kontrol Listesi:**
-- Birinci sütun: `Potential` (V)
-- İkinci sütun: `Current` (A)
-- Tarama hızı bilgisi dosya adında (örn. `cv_50mVs.csv`, `50.csv`)
-- Anodik pik tarama yönünde belirgin olmalı
+**CSV Format Checklist:**
+- First column: `Potential` (V)
+- Second column: `Current` (A)
+- Scan rate in filename (e.g. `cv_50mVs.csv`, `50.csv`)
+- Anodic peak should be clearly visible in the scan direction
 """)
             except Exception as e:
                 st.error(str(e))
@@ -960,6 +1003,14 @@ elif page == "🔵  EIS — Impedance":
     tmpdir=tempfile.mkdtemp(); file_dict={}
 
     if eis_mode == "📁 Upload CSV":
+        _csv_template_btn(
+            "Freq_Hz,Zreal_Ohm,Zimag_Ohm\n"
+            "100000,10.2,-0.8\n50000,10.5,-1.4\n10000,11.8,-3.2\n5000,14.1,-7.1\n"
+            "1000,28.5,-22.4\n500,55.3,-38.7\n100,210.4,-85.3\n50,340.1,-72.1\n"
+            "10,480.2,-38.4\n5,510.3,-22.1\n1,530.5,-10.2\n",
+            "eis_template.csv",
+            "⬇️ Download EIS Template (Zreal / Zimag columns)"
+        )
         eis_ups = st.file_uploader("EIS files",type="csv",accept_multiple_files=True)
         if eis_ups:
             st.markdown('<div class="sec">Electrode labels</div>',unsafe_allow_html=True)
@@ -1066,6 +1117,13 @@ elif page == "🧪  pH — Working pH":
     tmpdir=tempfile.mkdtemp(); ph_path=None
 
     if ph_mode == "📁 Upload CSV":
+        _csv_template_btn(
+            "pH,Ep_mV\n"
+            "4.0,320.5\n4.5,308.1\n5.0,295.4\n5.5,282.7\n6.0,270.3\n"
+            "6.5,257.9\n7.0,245.2\n7.5,232.8\n8.0,220.1\n8.5,207.4\n9.0,195.0\n",
+            "ph_template.csv",
+            "⬇️ Download pH Template (pH vs Peak Potential)"
+        )
         ph_up=st.file_uploader("pH table CSV",type="csv")
         if ph_up:
             st.dataframe(pd.read_csv(ph_up).head(10),use_container_width=True,hide_index=True)
@@ -1139,15 +1197,15 @@ elif page == "📊  Calibration & LOD/LOQ":
     st.caption(f"Project: **{_cur().get('name','')}**")
 
     # ── Toplu Validasyon Şablonu İndir & Yükle ─────────────────────────────
-    with st.expander("📦 Toplu Validasyon Şablonu (.xlsx) — tek dosyada tüm bölümler",
+    with st.expander("📦 Bulk Validation Template (.xlsx) — all sections in one file",
                      expanded=False):
         col_dl, col_up2 = st.columns([1, 1])
         with col_dl:
-            st.markdown("**1 · Şablonu İndir**")
+            st.markdown("**1 · Download Template**")
 
             @st.cache_data(show_spinner=False)
             def _build_template_bytes():
-                """Şablonu bellekte üret ve bytes olarak döndür (Streamlit Cloud uyumlu)."""
+                """Build the template in memory and return bytes (Streamlit Cloud compatible)."""
                 import io, openpyxl
                 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
                 from openpyxl.utils import get_column_letter
@@ -1187,27 +1245,27 @@ elif page == "📊  Calibration & LOD/LOQ":
                 _cw(ws, [28, 72])
                 readme = [
                     ("SilverstoneLab Echem Suite",
-                     "ICH Q2(R2) Toplu Validasyon Şablonu  –  v1.0"),
+                     "ICH Q2(R2) Bulk Validation Template  –  v1.0"),
                     ("", ""),
-                    ("KULLANIM TALİMATI", ""),
-                    ("1. Doldurun", "Yeşil satırları rehber alın, sarı satırlara kendi verilerinizi girin."),
-                    ("2. Kaydedin", ".xlsx olarak kaydedin, sekme isimlerini değiştirmeyin."),
-                    ("3. Yükleyin", "Uygulamada 'Toplu Validasyon → Doldurulmuş şablonu yükle' bölümüne sürükleyin."),
-                    ("4. Çalıştırın", "'Tüm Validasyonu Çalıştır' butonuyla tek seferde tüm hesaplamalar yapılır."),
+                    ("HOW TO USE", ""),
+                    ("1. Fill in", "Use the green rows as a guide; enter your own data in the yellow rows."),
+                    ("2. Save", "Save as .xlsx; do not rename the sheet tabs."),
+                    ("3. Upload", "Drag the file into the app's 'Bulk Validation → Upload filled template' section."),
+                    ("4. Run", "Click 'Run All Validation' to compute everything at once."),
                     ("", ""),
-                    ("SEKME AÇIKLAMALARI", ""),
-                    ("Calibration",     "Konsantrasyon (A sütunu) + tekrar ip ölçümleri (B, C, … sütunları). Min. 5 seviye."),
-                    ("Repeatability",   "Seviye | Konsantrasyon_uM | ip_uA — her seviye için ≥ 6 satır."),
-                    ("Inter_Precision", "Gun | Seviye | Konsantrasyon_uM | ip_uA — en az 3 farklı gün."),
-                    ("Accuracy",        "QC_Seviyesi | Nominal_uM | Tekrar | ip_uA — LLOQ/LQC/MQC/HQC."),
-                    ("Std_Addition",    "Eklenen_uM | ip_uA — eklenen standart ve ölçülen akım."),
+                    ("SHEET DESCRIPTIONS", ""),
+                    ("Calibration",     "Concentration (column A) + replicate ip measurements (B, C, … columns). Min. 5 levels."),
+                    ("Repeatability",   "Level | Concentration_uM | ip_uA — ≥ 6 rows per level."),
+                    ("Inter_Precision", "Day | Level | Concentration_uM | ip_uA — at least 3 different days."),
+                    ("Accuracy",        "QC_Level | Nominal_uM | Replicate | ip_uA — LLOQ/LQC/MQC/HQC."),
+                    ("Std_Addition",    "Added_uM | ip_uA — added standard concentration and measured current."),
                     ("", ""),
-                    ("RENK ANAHTARI", ""),
-                    ("🟢 Yeşil", "Örnek / referans verisi — silebilirsiniz."),
-                    ("🟡 Sarı",  "Sizin verilerinizi girin."),
-                    ("🔵 Mavi",  "Sütun başlıkları — değiştirmeyin."),
+                    ("COLOUR KEY", ""),
+                    ("🟢 Green", "Sample / reference data — you may delete these rows."),
+                    ("🟡 Yellow","Enter your own data here."),
+                    ("🔵 Blue",  "Column headers — do not change."),
                     ("", ""),
-                    ("ÖNEMLİ", "Tüm konsantrasyonlar µM, tüm akımlar µA olarak girilmelidir. Boş hücre bırakın (0 yazmayın)."),
+                    ("IMPORTANT", "All concentrations in µM, all currents in µA. Leave blank cells empty (do not write 0)."),
                 ]
                 for r, (k, v) in enumerate(readme, 1):
                     ck = ws.cell(row=r, column=1, value=k)
@@ -1219,7 +1277,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                         for c in (ck, cv):
                             c.font = Font(bold=True, color="FFFFFF", size=13)
                             c.fill = PatternFill("solid", fgColor=BLUE_H)
-                    elif k in ("KULLANIM TALİMATI", "SEKME AÇIKLAMALARI", "RENK ANAHTARI", "ÖNEMLİ"):
+                    elif k in ("HOW TO USE", "SHEET DESCRIPTIONS", "COLOUR KEY", "IMPORTANT"):
                         for c in (ck, cv):
                             c.font = Font(bold=True, color="1F4E79", size=11)
                             c.fill = PatternFill("solid", fgColor=BLUE_L)
@@ -1244,11 +1302,11 @@ elif page == "📊  Calibration & LOD/LOQ":
 
                 # Repeatability
                 ws3 = wb.create_sheet("Repeatability"); _cw(ws3,[18,22,16])
-                _hdr(ws3, 1, ["Seviye","Konsantrasyon_uM","ip_uA"]); ws3.freeze_panes="A2"
+                _hdr(ws3, 1, ["Level","Concentration_uM","ip_uA"]); ws3.freeze_panes="A2"
                 _rep_ex = (
-                    [["Düşük",1.0,v] for v in [2.158,2.151,2.163,2.156,2.160,2.154]] +
+                    [["Low",1.0,v] for v in [2.158,2.151,2.163,2.156,2.160,2.154]] +
                     [["Orta",20.0,v] for v in [41.764,41.748,41.779,41.753,41.771,41.758]] +
-                    [["Yüksek",80.0,v] for v in [166.831,166.808,166.853,166.819,166.844,166.826]]
+                    [["High",80.0,v] for v in [166.831,166.808,166.853,166.819,166.844,166.826]]
                 )
                 for r, row in enumerate(_rep_ex, 2):
                     _dat(ws3, r, row)
@@ -1257,12 +1315,12 @@ elif page == "📊  Calibration & LOD/LOQ":
 
                 # Inter_Precision
                 ws4 = wb.create_sheet("Inter_Precision"); _cw(ws4,[14,18,22,16])
-                _hdr(ws4, 1, ["Gun","Seviye","Konsantrasyon_uM","ip_uA"]); ws4.freeze_panes="A2"
+                _hdr(ws4, 1, ["Day","Level","Concentration_uM","ip_uA"]); ws4.freeze_panes="A2"
                 _ipr_ex = []
                 for gn in range(1,4):
-                    for sev, conc, base in [("Düşük",1.0,2.157),("Orta",20.0,41.763),("Yüksek",80.0,166.831)]:
+                    for sev, conc, base in [("Low",1.0,2.157),("Mid",20.0,41.763),("High",80.0,166.831)]:
                         for i in range(3):
-                            _ipr_ex.append([f"Gün {gn}", sev, conc, round(base + (i-1)*0.012,3)])
+                            _ipr_ex.append([f"Day {gn}", sev, conc, round(base + (i-1)*0.012,3)])
                 for r, row in enumerate(_ipr_ex, 2):
                     _dat(ws4, r, row)
                 for r in range(len(_ipr_ex)+2, len(_ipr_ex)+8):
@@ -1270,7 +1328,7 @@ elif page == "📊  Calibration & LOD/LOQ":
 
                 # Accuracy
                 ws5 = wb.create_sheet("Accuracy"); _cw(ws5,[16,16,12,16])
-                _hdr(ws5, 1, ["QC_Seviyesi","Nominal_uM","Tekrar","ip_uA"]); ws5.freeze_panes="A2"
+                _hdr(ws5, 1, ["QC_Level","Nominal_uM","Replicate","ip_uA"]); ws5.freeze_panes="A2"
                 _acc_ex = (
                     [["LLOQ",0.14,i+1,round(0.373+(i-1)*0.004,4)] for i in range(3)] +
                     [["LQC", 0.42,i+1,round(0.950+(i-1)*0.008,4)] for i in range(3)] +
@@ -1284,7 +1342,7 @@ elif page == "📊  Calibration & LOD/LOQ":
 
                 # Std_Addition
                 ws6 = wb.create_sheet("Std_Addition"); _cw(ws6,[18,16])
-                _hdr(ws6, 1, ["Eklenen_uM","ip_uA"]); ws6.freeze_panes="A2"
+                _hdr(ws6, 1, ["Added_uM","ip_uA"]); ws6.freeze_panes="A2"
                 for r, row in enumerate([
                     [0.0,22.845],[2.0,27.019],[5.0,33.280],[10.0,43.714],[20.0,64.583],[40.0,106.321]
                 ], 2):
@@ -1299,24 +1357,24 @@ elif page == "📊  Calibration & LOD/LOQ":
 
             _tpl_bytes = _build_template_bytes()
             st.download_button(
-                "⬇️ Şablonu İndir (.xlsx)",
+                "⬇️ Download Template (.xlsx)",
                 data=_tpl_bytes,
                 file_name="SilverstoneLab_Validation_Template.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
-            st.caption("README sekmesini okuyun · Yeşil = örnek · Sarı = sizin veriniz · Sekme isimlerini değiştirmeyin.")
+            st.caption("Read the README sheet · Green = example · Yellow = your data · Do not rename sheets.")
 
         with col_up2:
-            st.markdown("**2 · Doldurulmuş Şablonu Yükle**")
-            bulk_up = st.file_uploader("Doldurulmuş şablonu yükle (.xlsx)",
+            st.markdown("**2 · Upload Filled Template**")
+            bulk_up = st.file_uploader("Upload filled template (.xlsx)",
                                        type=["xlsx"], key="bulk_xlsx_up")
             if bulk_up:
                 try:
                     import openpyxl as _opxl
                     _wb = _opxl.load_workbook(bulk_up, data_only=True)
                     _sheets = [s.title for s in _wb.worksheets]
-                    st.success(f"✓ Yüklendi — sekmeler: {', '.join(_sheets)}")
+                    st.success(f"✓ Loaded — sheets: {', '.join(_sheets)}")
 
                     def _xl_sheet_to_df(wb, name):
                         """Return a sheet as a list-of-lists (row 0 = headers)."""
@@ -1349,7 +1407,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                                 _bulk_cal[_conc] = _vals
                         if _bulk_cal:
                             st.session_state["bulk_cal"] = _bulk_cal
-                            st.caption(f"  Kalibrasyon: {len(_bulk_cal)} konsantrasyon seviyesi aktarıldı.")
+                            st.caption(f"  Calibration: {len(_bulk_cal)} concentration levels imported.")
 
                     # ── Repeatability ────────────────────────────────────────
                     _rep_rows = _xl_sheet_to_df(_wb, "Repeatability")
@@ -1366,7 +1424,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                             _bulk_rep.setdefault(_lbl, []).append(_ip)
                         if _bulk_rep:
                             st.session_state["bulk_rep"] = _bulk_rep
-                            st.caption(f"  Tekrarlılık: {len(_bulk_rep)} seviye aktarıldı.")
+                            st.caption(f"  Repeatability: {len(_bulk_rep)} levels imported.")
 
                     # ── Inter_Precision ──────────────────────────────────────
                     _ipr_rows = _xl_sheet_to_df(_wb, "Inter_Precision")
@@ -1384,7 +1442,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                             _bulk_ipr.setdefault(_gun, {}).setdefault(_sev, []).append(_ip)
                         if _bulk_ipr:
                             st.session_state["bulk_ipr"] = _bulk_ipr
-                            st.caption(f"  Orta Kesinlik: {len(_bulk_ipr)} gün aktarıldı.")
+                            st.caption(f"  Intermediate Precision: {len(_bulk_ipr)} days imported.")
 
                     # ── Accuracy ─────────────────────────────────────────────
                     _acc_rows = _xl_sheet_to_df(_wb, "Accuracy")
@@ -1404,7 +1462,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                             _bulk_acc[_lbl][1].append(_ip)
                         if _bulk_acc:
                             st.session_state["bulk_acc"] = _bulk_acc
-                            st.caption(f"  Accuracy: {len(_bulk_acc)} QC seviyesi aktarıldı.")
+                            st.caption(f"  Accuracy: {len(_bulk_acc)} QC levels imported.")
 
                     # ── Std_Addition ─────────────────────────────────────────
                     _sa_rows = _xl_sheet_to_df(_wb, "Std_Addition")
@@ -1418,23 +1476,23 @@ elif page == "📊  Calibration & LOD/LOQ":
                                 pass
                         if _bulk_sa:
                             st.session_state["bulk_sa"] = _bulk_sa
-                            st.caption(f"  Standart Ekleme: {len(_bulk_sa)} nokta aktarıldı.")
+                            st.caption(f"  Standard Addition: {len(_bulk_sa)} points imported.")
 
                     # Kalibrasyon verisini bulk'tan al
                     if "bulk_cal" in st.session_state:
-                        st.info("✅ Şablon verisi yüklendi. Aşağıdan analizi başlatın."
-                                " ICH Q2 bölümlerine geçtiğinizde veriler otomatik uygulanır.")
+                        st.info("✅ Template data loaded. Start the analysis below."
+                                " Data will be applied automatically when you open the ICH Q2 sections.")
 
                 except Exception as _e:
-                    st.error(f"Şablon okunamadı: {_e}")
+                    st.error(f"Could not read template: {_e}")
 
     # ── Toplu Validasyon: Tek Tıkla Çalıştır ──────────────────────────────────
     _has_bulk = ("bulk_cal" in st.session_state and st.session_state.get("bulk_cal"))
     if _has_bulk:
-        st.success("📦 Şablon yüklendi — tüm bölümler hazır. Aşağıdan tek seferde çalıştırın.")
+        st.success("📦 Template loaded — all sections ready. Run everything below in one click.")
         _bulk_col1, _bulk_col2, _bulk_col3 = st.columns([2, 1, 1])
         with _bulk_col1:
-            _bulk_analyte  = st.text_input("Analite adı (rapor için)",
+            _bulk_analyte  = st.text_input("Analyte name (for report)",
                                             value=st.session_state.get("bulk_analyte","Analyte"),
                                             key="bulk_analyte_inp")
             st.session_state["bulk_analyte"] = _bulk_analyte
@@ -1444,11 +1502,11 @@ elif page == "📊  Calibration & LOD/LOQ":
                                        index=_BUNITS.index(st.session_state.get("cal_unit","μM")))
             st.session_state["cal_unit"] = _bulk_unit
         with _bulk_col3:
-            _bulk_area = st.number_input("Elektrot alanı (cm²)",
+            _bulk_area = st.number_input("Electrode area (cm²)",
                                           value=0.0, min_value=0.0, format="%.4f",
                                           key="bulk_area_inp")
 
-        if st.button("▶ Tüm Validasyonu Çalıştır", type="primary",
+        if st.button("▶ Run All Validation", type="primary",
                      use_container_width=True, key="btn_bulk_run"):
             import tempfile, os as _os
             _banalyte = st.session_state.get("bulk_analyte", "Analyte")
@@ -1457,7 +1515,7 @@ elif page == "📊  Calibration & LOD/LOQ":
             _bout     = tempfile.mkdtemp(prefix="bulk_validation_")
             _bps      = st.session_state.get("plot_style", {}) or {}
 
-            with st.spinner("⚙️ Kalibrasyon + LOD/LOQ hesaplanıyor…"):
+            with st.spinner("⚙️ Computing calibration + LOD/LOQ…"):
                 try:
                     _bulk_res = run_analytical_performance(
                         calibration_source=st.session_state["bulk_cal"],
@@ -1477,14 +1535,14 @@ elif page == "📊  Calibration & LOD/LOQ":
                         "Slope":  f"{_cr.get('slope',0):.4f} µA/{_bunit}",
                         "Intercept": f"{_cr.get('intercept',0):.4f} µA",
                     }, _bout)
-                    st.success("✅ Kalibrasyon tamamlandı.")
+                    st.success("✅ Calibration complete.")
                 except Exception as _e:
-                    st.error(f"Kalibrasyon hatası: {_e}")
+                    st.error(f"Calibration error: {_e}")
                     import traceback; st.code(traceback.format_exc())
 
             # ICH Q2 Precision ───────────────────────────────────────────────
             if "bulk_rep" in st.session_state and st.session_state["bulk_rep"]:
-                with st.spinner("⚙️ ICH Q2(R2) Kesinlik hesaplanıyor…"):
+                with st.spinner("⚙️ Computing ICH Q2(R2) precision…"):
                     try:
                         _intra  = st.session_state["bulk_rep"]
                         _inter_flat = {}
@@ -1501,13 +1559,13 @@ elif page == "📊  Calibration & LOD/LOQ":
                             plot_style=_bps,
                         )
                         st.session_state["bulk_prec_res"] = _prec_res
-                        st.success("✅ Kesinlik validasyonu tamamlandı.")
+                        st.success("✅ Precision validation complete.")
                     except Exception as _e:
-                        st.error(f"Kesinlik hatası: {_e}")
+                        st.error(f"Precision error: {_e}")
 
             # Accuracy ────────────────────────────────────────────────────────
             if "bulk_acc" in st.session_state and "bulk_full_res" in st.session_state:
-                with st.spinner("⚙️ Accuracy / Geri Kazanım hesaplanıyor…"):
+                with st.spinner("⚙️ Computing accuracy / recovery…"):
                     try:
                         _fcr = st.session_state["bulk_full_res"].get(
                             "calibration", st.session_state["bulk_full_res"])
@@ -1523,24 +1581,24 @@ elif page == "📊  Calibration & LOD/LOQ":
                             _cc   = (_ipm - _ic2) / _sl2 if _sl2 != 0 else float('nan')
                             _rp   = (_cc / _qnom * 100) if _qnom != 0 else float('nan')
                             _acc_rows_b.append({
-                                "QC Seviyesi": _qlbl,
+                                "QC Level": _qlbl,
                                 f"Nominal C ({_bunit})": _qnom,
                                 "n": len(_qvals),
                                 "ip ort. (µA)": round(_ipm, 4),
                                 "ip SD (µA)": round(_ipsd, 4),
-                                "ip %RSD": round(_iprsd, 2),
+                                "%RSD": round(_iprsd, 2),
                                 f"Hesaplanan C ({_bunit})": round(_cc, 4),
-                                "Geri Kazanım (%)": round(_rp, 2),
+                                "Recovery (%)": round(_rp, 2),
                                 "ICH Kabul (98–102%)": "✅" if 98 <= _rp <= 102 else "⚠️",
                             })
                         st.session_state["bulk_acc_rows"] = _acc_rows_b
-                        st.success("✅ Accuracy hesaplandı.")
+                        st.success("✅ Accuracy computed.")
                     except Exception as _e:
-                        st.error(f"Accuracy hatası: {_e}")
+                        st.error(f"Accuracy error: {_e}")
 
             # Standard Addition ───────────────────────────────────────────────
             if "bulk_sa" in st.session_state and st.session_state["bulk_sa"]:
-                with st.spinner("⚙️ Standart Ekleme hesaplanıyor…"):
+                with st.spinner("⚙️ Computing standard addition…"):
                     try:
                         _sa_adds = [x[0] for x in st.session_state["bulk_sa"]]
                         _sa_ips  = [x[1] for x in st.session_state["bulk_sa"]]
@@ -1550,9 +1608,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                             output_dir=_bout, plot_style=_bps,
                         )
                         st.session_state["bulk_sa_res"] = _sa_res
-                        st.success("✅ Standart ekleme hesaplandı.")
+                        st.success("✅ Standard addition computed.")
                     except Exception as _e:
-                        st.error(f"Standart ekleme hatası: {_e}")
+                        st.error(f"Standard addition error: {_e}")
 
             st.session_state["bulk_ran"] = True
             st.rerun()
@@ -1560,14 +1618,14 @@ elif page == "📊  Calibration & LOD/LOQ":
         # ── Sonuçlar & Rapor (run sonrası görünür) ────────────────────────────
         if st.session_state.get("bulk_ran"):
             st.divider()
-            st.markdown("## 📊 Validasyon Sonuçları")
+            st.markdown("## 📊 Validation Results")
 
             # Kalibrasyon özeti
             if "bulk_full_res" in st.session_state:
                 _fcr2 = st.session_state["bulk_full_res"].get(
                     "calibration", st.session_state["bulk_full_res"])
                 _lr   = _fcr2.get("linear_range", ["?","?"])
-                st.markdown("### 📐 Kalibrasyon & LOD/LOQ")
+                st.markdown("### 📐 Calibration & LOD/LOQ")
                 _mc1,_mc2,_mc3,_mc4,_mc5 = st.columns(5)
                 _mc1.metric("Slope",   f"{_fcr2.get('slope',0):.4f} µA/{st.session_state.get('cal_unit','µM')}")
                 _mc2.metric("r²",      f"{_fcr2.get('R2',_fcr2.get('r',0))**2:.5f}" if _fcr2.get('r') else f"{_fcr2.get('R2',0):.5f}")
@@ -1580,65 +1638,65 @@ elif page == "📊  Calibration & LOD/LOQ":
 
             # ICH Q2 Kesinlik özeti
             if "bulk_prec_res" in st.session_state:
-                st.markdown("### 🔬 ICH Q2(R2) Kesinlik")
+                st.markdown("### 🔬 ICH Q2(R2) Precision")
                 _pr = st.session_state["bulk_prec_res"]
                 _intra_r = _pr.get("intraday", _pr.get("intraday_results", {}))
                 _inter_r = _pr.get("interday", _pr.get("interday_results", {}))
                 if _intra_r:
                     _intra_df = pd.DataFrame([
-                        {"Seviye": k, "n": v.get("n", len(v.get("values",[]))),
-                         "Ortalama (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
+                        {"Level": k, "n": v.get("n", len(v.get("values",[]))),
+                         "Mean (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
                          "%RSD": round(v.get("rsd", 0), 2),
-                         "Tekrarlılık (≤2%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
+                         "Repeatability (≤2%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
                         for k,v in _intra_r.items() if isinstance(v, dict)
                     ])
-                    st.caption("**Tekrar Edilebilirlik (Gün İçi)**")
+                    st.caption("**Repeatability (Intraday)**")
                     st.dataframe(_intra_df, hide_index=True, use_container_width=True)
                 if _inter_r:
                     _inter_df = pd.DataFrame([
-                        {"Grup": k, "n": v.get("n", len(v.get("values",[]))),
-                         "Ortalama (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
+                        {"Group": k, "n": v.get("n", len(v.get("values",[]))),
+                         "Mean (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
                          "%RSD": round(v.get("rsd", 0), 2),
-                         "Ara Kesinlik (≤5%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
+                         "Intermediate Precision (≤5%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
                         for k,v in _inter_r.items() if isinstance(v, dict)
                     ])
-                    st.caption("**Ara Kesinlik (Günler Arası)**")
+                    st.caption("**Intermediate Precision (Interday)**")
                     st.dataframe(_inter_df, hide_index=True, use_container_width=True)
 
             # Accuracy özeti
             if "bulk_acc_rows" in st.session_state:
-                st.markdown("### 🎯 Accuracy / Geri Kazanım")
+                st.markdown("### 🎯 Accuracy / Recovery")
                 _acc_df2 = pd.DataFrame(st.session_state["bulk_acc_rows"])
                 st.dataframe(_acc_df2, hide_index=True, use_container_width=True)
-                _all_ok = all(98 <= r["Geri Kazanım (%)"] <= 102
+                _all_ok = all(98 <= r["Recovery (%)"] <= 102
                               for r in st.session_state["bulk_acc_rows"]
-                              if not (isinstance(r["Geri Kazanım (%)"], float)
-                                      and np.isnan(r["Geri Kazanım (%)"])))
+                              if not (isinstance(r["Recovery (%)"], float)
+                                      and np.isnan(r["Recovery (%)"])))
                 if _all_ok:
-                    st.success("✅ Tüm QC seviyeleri ICH Q2(R2) accuracy kriterini karşılıyor (98–102%)")
+                    st.success("✅ All QC levels meet the ICH Q2(R2) accuracy criterion (98–102%)")
                 else:
-                    st.warning("⚠️ Bazı QC seviyeleri 98–102% aralığının dışında.")
+                    st.warning("⚠️ Some QC levels are outside the 98–102% range.")
 
             # Standart Ekleme özeti
             if "bulk_sa_res" in st.session_state:
                 _sar = st.session_state["bulk_sa_res"]
-                st.markdown("### ➕ Standart Ekleme")
+                st.markdown("### ➕ Standard Addition")
                 _sc1,_sc2,_sc3 = st.columns(3)
                 _sc1.metric("Slope", f"{_sar.get('slope',0):.4f}")
                 _sc2.metric("R²",    f"{_sar.get('R2',0):.5f}")
-                _sc3.metric("Numune konsantrasyonu",
+                _sc3.metric("Sample concentration",
                             f"{_sar.get('sample_concentration',0):.4g} "
                             f"{st.session_state.get('cal_unit','µM')}")
 
             # ── Rapor Üret ────────────────────────────────────────────────────
             st.divider()
-            st.markdown("## 📄 Validasyon Raporu")
-            st.caption("ICH Q2(R2) uyumlu rapor — dergi yükleme formatında (PDF + Word)")
+            st.markdown("## 📄 Validation Report")
+            st.caption("ICH Q2(R2)-compliant report — ready for journal submission (PDF + Word)")
 
             _rep_col1, _rep_col2 = st.columns(2)
             with _rep_col1:
                 _rep_journal = st.selectbox(
-                    "Hedef dergi stili",
+                    "Target journal style",
                     ["Genel / ICH Q2(R2)", "Analytical Chemistry (ACS)",
                      "Biosensors & Bioelectronics (Elsevier)",
                      "ACS Sensors", "Talanta (Elsevier)",
@@ -1646,12 +1704,12 @@ elif page == "📊  Calibration & LOD/LOQ":
                     key="bulk_journal_sel"
                 )
             with _rep_col2:
-                _rep_lang = st.selectbox("Rapor dili", ["English", "Türkçe"],
+                _rep_lang = st.selectbox("Report language", ["English", "Türkçe"],
                                           key="bulk_rep_lang")
 
-            if st.button("📄 PDF + Word Raporu Oluştur", type="secondary",
+            if st.button("📄 Generate PDF + Word Report", type="secondary",
                          use_container_width=True, key="btn_bulk_report"):
-                with st.spinner("Rapor hazırlanıyor…"):
+                with st.spinner("Generating report…"):
                     try:
                         # Mevcut projeye tüm sonuçları kaydet
                         _proj = _cur()
@@ -1668,19 +1726,19 @@ elif page == "📊  Calibration & LOD/LOQ":
                             }, _rout)
                         if "bulk_acc_rows" in st.session_state:
                             _save_analysis("cal_accuracy", {
-                                r["QC Seviyesi"]: r["Geri Kazanım (%)"]
+                                r["QC Level"]: r["Recovery (%)"]
                                 for r in st.session_state["bulk_acc_rows"]
                             }, _rout)
 
                         # Rapor oluştur
                         _rpaths = generate_reports(_proj, _rout)
-                        st.success("✅ Rapor oluşturuldu!")
+                        st.success("✅ Report generated!")
 
                         _rdl1, _rdl2 = st.columns(2)
                         if "pdf" in _rpaths and os.path.exists(_rpaths["pdf"]):
                             with open(_rpaths["pdf"],"rb") as _pf:
                                 _rdl1.download_button(
-                                    "⬇️ PDF İndir", _pf.read(),
+                                    "⬇️ Download PDF", _pf.read(),
                                     file_name=f"{_banalyte}_ICH_Q2R2_Validation.pdf",
                                     mime="application/pdf",
                                     use_container_width=True,
@@ -1691,7 +1749,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                         if "docx" in _rpaths and os.path.exists(_rpaths["docx"]):
                             with open(_rpaths["docx"],"rb") as _wf:
                                 _rdl2.download_button(
-                                    "⬇️ Word İndir (.docx)", _wf.read(),
+                                    "⬇️ Download Word (.docx)", _wf.read(),
                                     file_name=f"{_banalyte}_ICH_Q2R2_Validation.docx",
                                     mime="application/vnd.openxmlformats-officedocument"
                                           ".wordprocessingml.document",
@@ -1701,14 +1759,14 @@ elif page == "📊  Calibration & LOD/LOQ":
                             _rdl2.error(f"DOCX: {_rpaths['docx_error']}")
 
                     except Exception as _re:
-                        st.error(f"Rapor hatası: {_re}")
+                        st.error(f"Report error: {_re}")
                         import traceback; st.code(traceback.format_exc())
 
             # ── AI Destekli Yorum ─────────────────────────────────────────────
-            st.markdown("### 🤖 AI Destekli Yorum (Yüksek İmpakt Dergi Formatı)")
+            st.markdown("### 🤖 AI-Assisted Interpretation (High-Impact Journal Format)")
             st.caption(
-                "AI, tüm validasyon sonuçlarını analiz ederek Methods & Results bölümüne "
-                "doğrudan eklenebilecek, hakemlik sürecine uygun İngilizce metin üretir."
+                "The AI analyses all validation results and generates publication-ready English text "
+                "suitable for the Methods & Results sections of a high-impact journal."
             )
             if "bulk_full_res" in st.session_state:
                 _ai_kwargs_bulk = {
@@ -1744,6 +1802,14 @@ elif page == "📊  Calibration & LOD/LOQ":
     cal_data={}
 
     if cal_mode == "📁 Upload CSV":
+        _csv_template_btn(
+            "concentration_uM,ip_run1_uA,ip_run2_uA,ip_run3_uA\n"
+            "0.5,0.312,0.318,0.315\n1.0,0.628,0.635,0.631\n2.0,1.254,1.261,1.258\n"
+            "5.0,3.142,3.148,3.145\n10.0,6.285,6.291,6.288\n20.0,12.57,12.58,12.57\n"
+            "50.0,31.42,31.45,31.44\n100.0,62.85,62.88,62.87\n",
+            "calibration_template.csv",
+            "⬇️ Download Calibration Template (concentration + 3 replicates)"
+        )
         cal_up=st.file_uploader("Calibration CSV",type="csv")
         if cal_up:
             df_prev=pd.read_csv(cal_up)
@@ -1753,14 +1819,14 @@ elif page == "📊  Calibration & LOD/LOQ":
                 try:
                     conc_val = float(row[cc])
                 except (ValueError, TypeError):
-                    continue   # başlık / metadata satırı — atla
+                    continue   # header / metadata row — skip
                 vals=[]
                 for c in df.columns[1:]:
                     try:
                         if pd.notna(row[c]):
                             vals.append(float(row[c]))
                     except (ValueError, TypeError):
-                        pass   # sayısal olmayan hücre — atla
+                        pass   # non-numeric cell — skip
                 if vals: cal_data[conc_val]=vals
     else:
         st.markdown('<div class="sec">Enter calibration data</div>',unsafe_allow_html=True)
@@ -1795,29 +1861,29 @@ elif page == "📊  Calibration & LOD/LOQ":
 
     # ── ICH Q2(R2) Precision Validation ──────────────────────
     st.divider()
-    with st.expander("🔬 ICH Q2(R2) Kesinlik Validasyonu (İsteğe Bağlı)", expanded=False):
+    with st.expander("🔬 ICH Q2(R2) Precision Validation (Optional)", expanded=False):
         st.markdown("""
-**ICH Q2(R2) Kabul Kriterleri:**
-| Kesinlik Tipi | Minimum Şart | %RSD Limiti |
+**ICH Q2(R2) Acceptance Criteria:**
+| Precision Type | Minimum Requirement | %RSD Limit |
 |---|---|---|
-| **Tekrar Edilebilirlik** (Gün İçi) | ≥3 tekrar, ≥3 konsantrasyon | **≤ %2** |
-| **Ara Kesinlik** (Günler Arası) | ≥3 gün, her günde ≥3 tekrar | **≤ %5** |
+| **Repeatability** (Intraday) | ≥3 replicates, ≥3 concentrations | **≤ 2%** |
+| **Intermediate Precision** (Interday) | ≥3 days, ≥3 replicates per day | **≤ 5%** |
         """)
 
-        ich_tab1, ich_tab2 = st.tabs(["📅 Gün İçi (Repeatability)", "📆 Günler Arası (Intermediate Precision)"])
+        ich_tab1, ich_tab2 = st.tabs(["📅 Intraday (Repeatability)", "📆 Interday (Intermediate Precision)"])
 
         # --- Gün İçi -------------------------------------------------
         with ich_tab1:
-            st.info("Aynı günde, farklı konsantrasyon seviyelerinde yapılan tekrar ölçümler. "
-                    "ICH Q2(R2): en az 3 seviye (düşük/orta/yüksek), her seviyede ≥3 tekrar.")
+            st.info("Replicate measurements at different concentration levels on the same day. "
+                    "ICH Q2(R2): at least 3 levels (low/mid/high), ≥3 replicates per level.")
 
-            ich_intra_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
+            ich_intra_mode = st.radio("Data entry", ["📋 Table (recommended)", "📁 Upload CSV"],
                                        horizontal=True, key="ich_intra_mode")
 
             intra_rows = []  # (etiket, list[float])
 
-            if ich_intra_mode == "📁 CSV yükle":
-                st.caption("Beklenen sütunlar: **Seviye**, **ip(uA)** — her satır bir tekrar.")
+            if ich_intra_mode == "📁 Upload CSV":
+                st.caption("Expected columns: **Level**, **ip(uA)** — one row per replicate.")
                 ich_intra_up = st.file_uploader("Repeatability CSV", type="csv", key="ich_intra_up")
                 if ich_intra_up:
                     try:
@@ -1826,23 +1892,23 @@ elif page == "📊  Calibration & LOD/LOQ":
                         lbl_col = next((c for c in df_intra.columns if any(k in c.lower()
                                         for k in ('seviye','level','label','grup'))), df_intra.columns[0])
                         ip_col  = next((c for c in df_intra.columns if any(k in c.lower()
-                                        for k in ('ip','current','i(','akım'))), None)
+                                        for k in ('ip','current','i(','akım'))), None)  # 'akım'=current in Turkish (kept for file compatibility)
                         if ip_col is None:
-                            st.error("CSV'de 'ip' sütunu bulunamadı.")
+                            st.error("No 'ip' column found in CSV.")
                         else:
                             for lbl, grp in df_intra.groupby(lbl_col, sort=False):
                                 vals = grp[ip_col].dropna().astype(float).tolist()
                                 if vals:
                                     intra_rows.append((str(lbl), vals))
-                            st.success(f"✓ {len(intra_rows)} seviye yüklendi")
+                            st.success(f"✓ {len(intra_rows)} levels loaded")
                             st.dataframe(df_intra, use_container_width=True, hide_index=True)
                     except Exception as e:
-                        st.error(f"CSV okunamadı: {e}")
+                        st.error(f"Could not read CSV: {e}")
             else:
                 # Tablo modu — her satır bir konsantrasyon seviyesi, sütunlar tekrarlar
-                st.caption("Her satır = bir konsantrasyon seviyesi. Boş hücreler otomatik atlanır.")
+                st.caption("Each row = one concentration level. Empty cells are skipped automatically.")
                 default_intra = pd.DataFrame({
-                    'Seviye (Etiket)': ['Düşük', 'Orta', 'Yüksek'],
+                    'Level (Label)': ['Low', 'Mid', 'High'],
                     'ip_1 (µA)': [None, None, None],
                     'ip_2 (µA)': [None, None, None],
                     'ip_3 (µA)': [None, None, None],
@@ -1854,7 +1920,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                                             use_container_width=True, key="ich_intra_tbl")
                 ip_cols_intra = [c for c in intra_tbl.columns if c.startswith('ip_')]
                 for _, row in intra_tbl.iterrows():
-                    lbl = str(row['Seviye (Etiket)']).strip() if pd.notna(row['Seviye (Etiket)']) else ''
+                    lbl = str(row['Level (Label)']).strip() if pd.notna(row['Level (Label)']) else ''
                     if not lbl or lbl == 'None':
                         continue
                     vals = []
@@ -1869,16 +1935,16 @@ elif page == "📊  Calibration & LOD/LOQ":
 
         # --- Günler Arası --------------------------------------------
         with ich_tab2:
-            st.info("Aynı konsantrasyon seviyesinde farklı günlerde yapılan ölçümler. "
-                    "Her gün en az 3 tekrar önerilir.")
+            st.info("Measurements on different days at the same concentration level. "
+                    "At least 3 replicates per day are recommended.")
 
-            ich_inter_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
+            ich_inter_mode = st.radio("Data entry", ["📋 Table (recommended)", "📁 Upload CSV"],
                                        horizontal=True, key="ich_inter_mode")
 
             inter_rows = []  # (etiket, list[float])
 
-            if ich_inter_mode == "📁 CSV yükle":
-                st.caption("Beklenen sütunlar: **Gun**, **ip(uA)** — her satır bir tekrar.")
+            if ich_inter_mode == "📁 Upload CSV":
+                st.caption("Expected columns: **Day**, **ip(uA)** — one row per replicate.")
                 ich_inter_up = st.file_uploader("Intermediate Precision CSV", type="csv", key="ich_inter_up")
                 if ich_inter_up:
                     try:
@@ -1887,23 +1953,23 @@ elif page == "📊  Calibration & LOD/LOQ":
                         day_col = next((c for c in df_inter.columns if any(k in c.lower()
                                         for k in ('gun','day','gün','date'))), df_inter.columns[0])
                         ip_col  = next((c for c in df_inter.columns if any(k in c.lower()
-                                        for k in ('ip','current','i(','akım'))), None)
+                                        for k in ('ip','current','i(','akım'))), None)  # 'akım'=current in Turkish (kept for file compatibility)
                         if ip_col is None:
-                            st.error("CSV'de 'ip' sütunu bulunamadı.")
+                            st.error("No 'ip' column found in CSV.")
                         else:
                             for day, grp in df_inter.groupby(day_col, sort=False):
                                 vals = grp[ip_col].dropna().astype(float).tolist()
                                 if vals:
                                     inter_rows.append((str(day), vals))
-                            st.success(f"✓ {len(inter_rows)} gün yüklendi")
+                            st.success(f"✓ {len(inter_rows)} day groups loaded")
                             st.dataframe(df_inter, use_container_width=True, hide_index=True)
                     except Exception as e:
-                        st.error(f"CSV okunamadı: {e}")
+                        st.error(f"Could not read CSV: {e}")
             else:
                 # Tablo modu — her satır bir gün, sütunlar tekrarlar
-                st.caption("Her satır = bir gün. Boş hücreler otomatik atlanır.")
+                st.caption("Each row = one day. Empty cells are skipped automatically.")
                 default_inter = pd.DataFrame({
-                    'Gün (Etiket)': ['Gün 1', 'Gün 2', 'Gün 3'],
+                    'Day (Label)': ['Day 1', 'Day 2', 'Day 3'],
                     'ip_1 (µA)': [None, None, None],
                     'ip_2 (µA)': [None, None, None],
                     'ip_3 (µA)': [None, None, None],
@@ -1915,7 +1981,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                                             use_container_width=True, key="ich_inter_tbl")
                 ip_cols_inter = [c for c in inter_tbl.columns if c.startswith('ip_')]
                 for _, row in inter_tbl.iterrows():
-                    lbl = str(row['Gün (Etiket)']).strip() if pd.notna(row['Gün (Etiket)']) else ''
+                    lbl = str(row['Day (Label)']).strip() if pd.notna(row['Day (Label)']) else ''
                     if not lbl or lbl == 'None':
                         continue
                     vals = []
@@ -1931,16 +1997,16 @@ elif page == "📊  Calibration & LOD/LOQ":
         # Bulk şablondan gelen kesinlik verilerini otomatik ekle (henüz manuel giriş yoksa)
         if not intra_rows and "bulk_rep" in st.session_state:
             intra_rows = [(lbl, vals) for lbl, vals in st.session_state["bulk_rep"].items()]
-            st.info(f"📦 Bulk şablondan tekrarlılık verisi yüklendi: {[r[0] for r in intra_rows]}")
+            st.info(f"📦 Repeatability data loaded from bulk template: {[r[0] for r in intra_rows]}")
         if not inter_rows and "bulk_ipr" in st.session_state:
             # {gun: {seviye: [vals]}} → flatten to [(gun_sev_lbl, vals)]
             for _gun, _sevs in st.session_state["bulk_ipr"].items():
                 for _sev, _vals in _sevs.items():
                     inter_rows.append((f"{_gun} – {_sev}", _vals))
             if inter_rows:
-                st.info(f"📦 Bulk şablondan orta kesinlik verisi yüklendi: {len(inter_rows)} grup")
+                st.info(f"📦 Intermediate precision data loaded from bulk template: {len(inter_rows)} groups")
 
-        if st.button("▶ ICH Q2(R2) Validasyon Hesapla", type="secondary", use_container_width=True,
+        if st.button("▶ Run ICH Q2(R2) Validation", type="secondary", use_container_width=True,
                      key="btn_ich_q2"):
             # intra_rows ve inter_rows her modda zaten (etiket, list[float]) formatında
             intraday_data_ich = {lbl: vs for lbl, vs in intra_rows if len(vs) >= 2}
@@ -1949,9 +2015,9 @@ elif page == "📊  Calibration & LOD/LOQ":
             interday_data_ich = {lbl: vs for lbl, vs in inter_rows if len(vs) >= 2}
 
             if not intraday_data_ich:
-                st.error("En az 1 gün içi veri grubu girilmeli (etiket + virgülle ayrılmış değerler).")
+                st.error("Enter at least 1 intraday data group (label + comma-separated values).")
             else:
-                with st.spinner("ICH Q2(R2) hesaplanıyor…"):
+                with st.spinner("Computing ICH Q2(R2)…"):
                     ich_out = os.path.join(tempfile.mkdtemp(), "ich_out")
                     os.makedirs(ich_out, exist_ok=True)
                     try:
@@ -1972,49 +2038,49 @@ elif page == "📊  Calibration & LOD/LOQ":
 
                         c1, c2 = st.columns(2)
                         intra_icon = "✅" if intra_ok else "❌"
-                        c1.metric(f"{intra_icon} Gün İçi Maks. %RSD",
+                        c1.metric(f"{intra_icon} Intraday Max %RSD",
                                   f"{intra_rsd_max:.2f}%",
-                                  delta=f"Limit: 2.0% — {'Geçti' if intra_ok else 'BAŞARISIZ'}",
+                                  delta=f"Limit: 2.0% — {'Pass' if intra_ok else 'FAIL'}",
                                   delta_color="normal" if intra_ok else "inverse")
                         if inter_rsd_tot is not None:
                             inter_icon = "✅" if inter_ok else "❌"
-                            c2.metric(f"{inter_icon} Günler Arası Toplam %RSD",
+                            c2.metric(f"{inter_icon} Interday Total %RSD",
                                       f"{inter_rsd_tot:.2f}%",
-                                      delta=f"Limit: 5.0% — {'Geçti' if inter_ok else 'BAŞARISIZ'}",
+                                      delta=f"Limit: 5.0% — {'Pass' if inter_ok else 'FAIL'}",
                                       delta_color="normal" if inter_ok else "inverse")
 
                         # ── Detay tablosu ──
-                        st.markdown("**Gün İçi Sonuçları:**")
+                        st.markdown("**Intraday Results:**")
                         rows_disp = []
                         for lbl, r in ich_res['intraday'].items():
                             rows_disp.append({
                                 'Grup': lbl, 'n': r['n'],
-                                'Ortalama (μA)': f"{r['mean']:.4f}",
+                                'Mean (μA)': f"{r['mean']:.4f}",
                                 'SD (μA)': f"{r['std']:.4f}",
                                 '%RSD': f"{r['rsd']:.2f}%",
                                 'ICH Limit': '≤2%',
-                                'Durum': '✅ Geçti' if r['pass'] else '❌ Başarısız'
+                                'Status': '✅ Pass' if r['pass'] else '❌ Fail'
                             })
                         st.dataframe(pd.DataFrame(rows_disp),
                                      use_container_width=True, hide_index=True)
 
                         if ich_res['interday']:
-                            st.markdown("**Günler Arası Sonuçları:**")
+                            st.markdown("**Interday Results:**")
                             rows_inter_disp = []
                             for day, r in ich_res['interday'].items():
                                 if day.startswith('_'):
                                     continue
                                 rows_inter_disp.append({
-                                    'Gün': day, 'n': r['n'],
-                                    'Ortalama (μA)': f"{r['mean']:.4f}",
+                                    'Day': day, 'n': r['n'],
+                                    'Mean (μA)': f"{r['mean']:.4f}",
                                     'SD (μA)': f"{r['std']:.4f}",
-                                    '%RSD (gün içi)': f"{r['rsd']:.2f}%",
+                                    '%RSD (intraday)': f"{r['rsd']:.2f}%",
                                 })
                             st.dataframe(pd.DataFrame(rows_inter_disp),
                                          use_container_width=True, hide_index=True)
                             if inter_rsd_tot is not None:
                                 inter_icon = "✅" if inter_ok else "❌"
-                                st.markdown(f"**Günler arası toplam %RSD:** {inter_rsd_tot:.2f}%  "
+                                st.markdown(f"**Interday total %RSD:** {inter_rsd_tot:.2f}%  "
                                             f"(ICH limit ≤5%)  {inter_icon}")
 
                         # ── Grafik ──
@@ -2022,22 +2088,22 @@ elif page == "📊  Calibration & LOD/LOQ":
                         _dl_btn(ich_out, "ich_q2_validation.zip")
 
                     except Exception as e:
-                        st.error(f"ICH Q2 hesaplama hatası: {e}")
+                        st.error(f"ICH Q2 computation error: {e}")
                         import traceback; st.code(traceback.format_exc())
 
     # ── QC Noktaları + Accuracy ──────────────────────────────
     st.divider()
-    with st.expander("🎯 QC Noktaları & Accuracy / Geri Kazanım (İsteğe Bağlı)", expanded=False):
+    with st.expander("🎯 QC Points & Accuracy / Recovery (Optional)", expanded=False):
 
         # ── QC Önerisi ──────────────────────────────────────────
-        st.markdown("### 💡 QC Noktası Önerisi")
-        st.caption("Girdiğin kalibrasyon verisi üzerinden otomatik hesaplanır. "
-                   "Önce kalibrasyon verisini gir, sonra butona bas.")
+        st.markdown("### 💡 QC Point Suggestion")
+        st.caption("Automatically computed from your calibration data. "
+                   "Enter calibration data first, then click the button.")
 
-        if st.button("🔢 QC Noktalarını Hesapla (LLOQ · LQC · MQC · HQC)",
+        if st.button("🔢 Compute QC Points (LLOQ · LQC · MQC · HQC)",
                      key="btn_qc_suggest", type="secondary"):
             if not cal_data:
-                st.warning("Önce kalibrasyon verisini gir.")
+                st.warning("Enter calibration data first.")
             else:
                 from scipy import stats as _stats
                 _concs = sorted(cal_data.keys())
@@ -2062,19 +2128,19 @@ elif page == "📊  Calibration & LOD/LOQ":
                 def _ip(c): return round(_slope * c + _intercept, 4)
 
                 qc_df = pd.DataFrame([
-                    {"QC Seviyesi": "LLOQ", "Nominal C": f"{lloq:.4g} {conc_unit}",
-                     "Beklenen ip (µA)": _ip(lloq), "Açıklama": "Alt tayin sınırı (LOQ)"},
-                    {"QC Seviyesi": "LQC",  "Nominal C": f"{lqc:.4g} {conc_unit}",
-                     "Beklenen ip (µA)": _ip(lqc),  "Açıklama": "Düşük QC ≈ 3× LLOQ"},
-                    {"QC Seviyesi": "MQC",  "Nominal C": f"{mqc:.4g} {conc_unit}",
-                     "Beklenen ip (µA)": _ip(mqc),  "Açıklama": "Orta QC (geometrik orta)"},
-                    {"QC Seviyesi": "HQC",  "Nominal C": f"{hqc:.4g} {conc_unit}",
-                     "Beklenen ip (µA)": _ip(hqc),  "Açıklama": "Yüksek QC ≈ %80 üst sınır"},
+                    {"QC Level": "LLOQ", "Nominal C": f"{lloq:.4g} {conc_unit}",
+                     "Expected ip (µA)": _ip(lloq), "Description": "Lower limit of quantification (LOQ)"},
+                    {"QC Level": "LQC",  "Nominal C": f"{lqc:.4g} {conc_unit}",
+                     "Expected ip (µA)": _ip(lqc),  "Description": "Low QC ≈ 3× LLOQ"},
+                    {"QC Level": "MQC",  "Nominal C": f"{mqc:.4g} {conc_unit}",
+                     "Expected ip (µA)": _ip(mqc),  "Description": "Mid QC (geometric mean)"},
+                    {"QC Level": "HQC",  "Nominal C": f"{hqc:.4g} {conc_unit}",
+                     "Expected ip (µA)": _ip(hqc),  "Description": "High QC ≈ 80% of upper range"},
                 ])
                 st.dataframe(qc_df, use_container_width=True, hide_index=True)
-                st.caption(f"Kalibrasyon: slope={_slope:.4f} µA/{conc_unit} | "
+                st.caption(f"Calibration: slope={_slope:.4f} µA/{conc_unit} | "
                            f"LOD={_lod:.4g} | LOQ={_loq:.4g} {conc_unit} | "
-                           f"r={_r:.5f} | Aralık: {_cmin:.4g}–{_cmax:.4g} {conc_unit}")
+                           f"r={_r:.5f} | Range: {_cmin:.4g}–{_cmax:.4g} {conc_unit}")
                 # Session state'e kaydet — Accuracy tablosunda kullanmak için
                 st.session_state["qc_points"] = {
                     "slope": _slope, "intercept": _intercept,
@@ -2085,11 +2151,11 @@ elif page == "📊  Calibration & LOD/LOQ":
         st.divider()
 
         # ── Accuracy / Geri Kazanım Tablosu ─────────────────────
-        st.markdown("### 📐 Accuracy (Geri Kazanım)")
-        st.caption("Her satır = bir QC seviyesi. Her sütun = bir tekrar ölçümü (ip, µA). "
-                   "Nominal konsantrasyon ile ölçülen ip'den geri kazanım hesaplanır.")
+        st.markdown("### 📐 Accuracy (Recovery)")
+        st.caption("Each row = one QC level. Each column = one replicate measurement (ip, µA). "
+                   "Recovery is computed from the nominal concentration and measured ip.")
 
-        acc_mode = st.radio("Veri girişi", ["📋 Tablo (önerilen)", "📁 CSV yükle"],
+        acc_mode = st.radio("Data entry", ["📋 Table (recommended)", "📁 Upload CSV"],
                              horizontal=True, key="acc_mode")
 
         # QC noktaları öneriden geldiyse tablo etiketlerini doldur
@@ -2106,13 +2172,13 @@ elif page == "📊  Calibration & LOD/LOQ":
         if "bulk_acc" in st.session_state and not acc_tbl_data:
             for _lbl, (_nom, _vals) in st.session_state["bulk_acc"].items():
                 acc_tbl_data.append((_lbl, _nom, _vals))
-            st.info(f"📦 Bulk şablondan accuracy verisi yüklendi: {[d[0] for d in acc_tbl_data]}")
+            st.info(f"📦 Accuracy data loaded from bulk template: {[d[0] for d in acc_tbl_data]}")
 
-        if acc_mode == "📁 CSV yükle":
+        if acc_mode == "📁 Upload CSV":
             st.caption(
-                "Beklenen sütunlar: **QC Seviyesi** (LLOQ/LQC/MQC/HQC), "
-                f"**Nominal C ({conc_unit})**, **ip(uA)** — her satır bir tekrar. "
-                "Üretilen `4_accuracy_recovery.csv` doğrudan yüklenebilir."
+                "Expected columns: **QC Level** (LLOQ/LQC/MQC/HQC), "
+                f"**Nominal C ({conc_unit})**, **ip(uA)** — one row per replicate. "
+                "The generated `4_accuracy_recovery.csv` file can be uploaded directly."
             )
             acc_up = st.file_uploader("Accuracy / Recovery CSV", type="csv", key="acc_up")
             if acc_up:
@@ -2136,9 +2202,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                                    and c != qc_col and c != nom_col_up]
 
                     if nom_col_up is None:
-                        st.error("Nominal konsantrasyon sütunu bulunamadı.")
+                        st.error("No nominal concentration column found.")
                     elif ip_col_up is None and not ip_run_cols:
-                        st.error("ip ölçüm sütunu bulunamadı.")
+                        st.error("No ip measurement column found.")
                     else:
                         st.dataframe(df_acc_up, use_container_width=True, hide_index=True)
                         if ip_run_cols:
@@ -2168,13 +2234,13 @@ elif page == "📊  Calibration & LOD/LOQ":
                                 vals = grp[ip_col_up].dropna().astype(float).tolist()
                                 if vals:
                                     acc_tbl_data.append((str(lbl), nom, vals))
-                        st.success(f"✓ {len(acc_tbl_data)} QC seviyesi yüklendi: "
+                        st.success(f"✓ {len(acc_tbl_data)} QC levels loaded: "
                                    f"{[d[0] for d in acc_tbl_data]}")
                 except Exception as e:
-                    st.error(f"CSV okunamadı: {e}")
+                    st.error(f"Could not read CSV: {e}")
         else:
             default_acc = pd.DataFrame({
-                'QC Seviyesi':    ['LLOQ', 'LQC', 'MQC', 'HQC'],
+                'QC Level':    ['LLOQ', 'LQC', 'MQC', 'HQC'],
                 f'Nominal C ({conc_unit})': [_lloq_v or None, _lqc_v or None,
                                               _mqc_v or None, _hqc_v or None],
                 'ip_1 (µA)': [None]*4, 'ip_2 (µA)': [None]*4,
@@ -2186,7 +2252,7 @@ elif page == "📊  Calibration & LOD/LOQ":
             nom_col  = acc_tbl.columns[1]
             ip_cols  = [c for c in acc_tbl.columns if c.startswith('ip_')]
             for _, row in acc_tbl.iterrows():
-                lbl = str(row['QC Seviyesi']).strip() if pd.notna(row['QC Seviyesi']) else ''
+                lbl = str(row['QC Level']).strip() if pd.notna(row['QC Level']) else ''
                 if not lbl or lbl == 'None':
                     continue
                 try:
@@ -2203,10 +2269,10 @@ elif page == "📊  Calibration & LOD/LOQ":
                 if vals:
                     acc_tbl_data.append((lbl, nom, vals))
 
-        if st.button("▶ Accuracy Hesapla", key="btn_acc", type="secondary"):
+        if st.button("▶ Compute Accuracy", key="btn_acc", type="secondary"):
             _qc_now = st.session_state.get("qc_points", {})
             if not _qc_now and not cal_data:
-                st.warning("Önce 'QC Noktalarını Hesapla' butonuna bas veya kalibrasyon verisini gir.")
+                st.warning("Click 'Compute QC Points' first, or enter calibration data.")
             else:
                 # Slope/intercept al — session'dan veya cal_data'dan hesapla
                 if _qc_now:
@@ -2227,32 +2293,32 @@ elif page == "📊  Calibration & LOD/LOQ":
                     calc_c   = (ip_mean - _ic) / _sl if _sl != 0 else float('nan')
                     rec_pct  = (calc_c / nom_c * 100) if nom_c != 0 else float('nan')
                     acc_rows.append({
-                        'QC Seviyesi': lbl,
+                        'QC Level': lbl,
                         f'Nominal C ({conc_unit})': nom_c,
                         'n': len(vals),
                         'ip ort. (µA)': round(ip_mean, 4),
                         'ip SD (µA)': round(ip_std, 4),
-                        'ip %RSD': round(ip_rsd, 2),
+                        '%RSD': round(ip_rsd, 2),
                         f'Hesaplanan C ({conc_unit})': round(calc_c, 4),
-                        'Geri Kazanım (%)': round(rec_pct, 2),
+                        'Recovery (%)': round(rec_pct, 2),
                         'ICH Kabul (98–102%)': "✅" if 98 <= rec_pct <= 102 else "⚠️"
                     })
 
                 if acc_rows:
                     acc_res_df = pd.DataFrame(acc_rows)
                     st.dataframe(acc_res_df, use_container_width=True, hide_index=True)
-                    all_pass = all(98 <= r['Geri Kazanım (%)'] <= 102 for r in acc_rows
-                                   if not np.isnan(r['Geri Kazanım (%)']))
+                    all_pass = all(98 <= r['Recovery (%)'] <= 102 for r in acc_rows
+                                   if not np.isnan(r['Recovery (%)']))
                     if all_pass:
-                        st.success("✅ Tüm QC seviyeleri ICH Q2(R2) accuracy kriterini karşılıyor (98–102%)")
+                        st.success("✅ All QC levels meet the ICH Q2(R2) accuracy criterion (98–102%)")
                     else:
-                        st.warning("⚠️ Bazı QC seviyeleri 98–102% aralığının dışında.")
+                        st.warning("⚠️ Some QC levels are outside the 98–102% range.")
                     # Kaydet
                     _save_analysis("cal_accuracy",
-                                   {r['QC Seviyesi']: r['Geri Kazanım (%)'] for r in acc_rows},
+                                   {r['QC Level']: r['Recovery (%)'] for r in acc_rows},
                                    None)
                 else:
-                    st.warning("Tabloya en az 1 satır dolu veri gir.")
+                    st.warning("Enter at least 1 complete row of data in the table.")
 
     if cal_data and st.button("▶ Run Calibration Analysis",type="primary",use_container_width=True):
         with st.spinner("Computing…"):
@@ -2323,6 +2389,12 @@ elif page == "➕  Standard Addition":
     additions,ip_vals=[],[]
 
     if sa_mode == "📁 Upload CSV":
+        _csv_template_btn(
+            "added_conc_uM,ip_uA\n"
+            "0.0,2.145\n5.0,3.482\n10.0,4.819\n15.0,6.156\n20.0,7.493\n25.0,8.830\n",
+            "standard_addition_template.csv",
+            "⬇️ Download Standard Addition Template"
+        )
         sa_up=st.file_uploader("Standard addition CSV",type="csv")
         if sa_up:
             df_sa=pd.read_csv(sa_up)
@@ -2488,6 +2560,13 @@ elif page == "📅  Stability":
     _stab_thresh  = st.number_input("Min. accepted % recovery", value=90.0, min_value=50.0, max_value=100.0, format="%.1f", key="stab_thresh")
     _stab_unit    = st.text_input("Unit", value="µM", key="stab_unit")
 
+    _csv_template_btn(
+        "Day,Signal_uA,SD_uA\n"
+        "0,8.542,0.112\n1,8.498,0.098\n3,8.421,0.134\n7,8.312,0.156\n"
+        "14,8.187,0.189\n21,8.054,0.201\n28,7.923,0.223\n",
+        "stability_template.csv",
+        "⬇️ Download Stability Template (Day / Signal / SD)"
+    )
     _stab_csv_up = st.file_uploader("Upload stability CSV (Day, Mean_signal_uA, [SD])", type="csv", key="stab_csv_up")
     _stab_rows = []
     if _stab_csv_up:
@@ -2627,6 +2706,13 @@ elif page == "🔬  Surface Characterization":
         _eis_data = {}
         with _eis_col1:
             st.markdown("**Bare GCE**")
+            _csv_template_btn(
+                "Zreal_Ohm,Zimag_Ohm\n"
+                "15.2,0.9\n16.8,3.1\n19.4,8.5\n28.7,21.3\n62.4,55.8\n"
+                "180.3,88.2\n340.5,72.1\n480.1,38.4\n510.2,22.0\n530.4,10.1\n",
+                "eis_bare_template.csv",
+                "⬇️ Download EIS Template"
+            )
             _eis_bare_up = st.file_uploader("Bare GCE EIS CSV", type="csv", key="eis_bare_nyquist")
             if _eis_bare_up:
                 try:
@@ -2640,6 +2726,13 @@ elif page == "🔬  Surface Characterization":
                     st.error(str(_e))
         with _eis_col2:
             st.markdown("**Modified Electrode**")
+            _csv_template_btn(
+                "Zreal_Ohm,Zimag_Ohm\n"
+                "52.1,1.2\n54.3,4.5\n60.8,14.2\n85.4,38.7\n195.3,112.4\n"
+                "480.2,195.1\n820.5,142.3\n1050.4,72.8\n1180.1,38.2\n1240.3,18.5\n",
+                "eis_modified_template.csv",
+                "⬇️ Download EIS Template"
+            )
             _eis_mod_up = st.file_uploader("Modified EIS CSV", type="csv", key="eis_mod_nyquist")
             if _eis_mod_up:
                 try:
@@ -2693,6 +2786,14 @@ elif page == "🔬  Surface Characterization":
         _cv_data = {}
         with _cv_col1:
             st.markdown("**Bare GCE**")
+            _csv_template_btn(
+                "Potential_V,Current_uA\n"
+                "-0.6,1.42\n-0.5,0.95\n-0.4,0.48\n-0.3,-0.12\n-0.2,-0.65\n"
+                "-0.1,-1.08\n0.0,-1.35\n0.1,-1.48\n0.2,-1.42\n0.3,-1.21\n"
+                "0.4,-0.88\n0.5,-0.42\n0.6,-0.08\n",
+                "cv_bare_template.csv",
+                "⬇️ Download CV Template"
+            )
             _cv_bare_up = st.file_uploader("Bare GCE CV CSV", type="csv", key="cv_bare_surf")
             if _cv_bare_up:
                 try:
@@ -2705,6 +2806,14 @@ elif page == "🔬  Surface Characterization":
                 except Exception as _e: st.error(str(_e))
         with _cv_col2:
             st.markdown("**Modified Electrode**")
+            _csv_template_btn(
+                "Potential_V,Current_uA\n"
+                "-0.6,3.85\n-0.5,2.61\n-0.4,1.32\n-0.3,-0.31\n-0.2,-1.78\n"
+                "-0.1,-2.95\n0.0,-3.68\n0.1,-4.02\n0.2,-3.87\n0.3,-3.31\n"
+                "0.4,-2.42\n0.5,-1.15\n0.6,-0.21\n",
+                "cv_modified_template.csv",
+                "⬇️ Download CV Template"
+            )
             _cv_mod_up = st.file_uploader("Modified CV CSV", type="csv", key="cv_mod_surf")
             if _cv_mod_up:
                 try:
@@ -2773,9 +2882,9 @@ elif page == "📄  Report":
     for k, a in analyses.items():
         interp = a.get("interpretation","")
         if interp:
-            st.markdown(f"- 🤖 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ✅ *AI yorumu var*")
+            st.markdown(f"- 🤖 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ✅ *AI interpretation available*")
         else:
-            st.markdown(f"- 📊 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ⚪ *AI yorumu yok*")
+            st.markdown(f"- 📊 {_mod_labels.get(k,k)} — {a.get('timestamp','')} ⚪ *No AI interpretation*")
             _missing_interp.append(k)
 
     st.divider()
@@ -2786,10 +2895,10 @@ elif page == "📄  Report":
                   st.session_state.get("gemini_api_key",""))
     _report_provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
 
-    st.markdown('<div class="sec">🤖 AI Modül Yorumları</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sec">🤖 AI Module Interpretations</div>', unsafe_allow_html=True)
 
     if not _report_ak:
-        st.info("Sidebar'dan bir AI API anahtarı girin — tüm modüllerin yorumlarını buradan tek seferde üretebilirsiniz.")
+        st.info("Enter an AI API key in the sidebar — you can generate interpretations for all modules here in one click.")
     else:
         # Interp fonksiyonu + argüman eşlemesi
         _INTERP_MAP = {
@@ -2810,7 +2919,7 @@ elif page == "📄  Report":
         }
 
         def _run_interp(key, fn, kwargs):
-            """AI yorumu üret (provider'a göre yönlendir)."""
+            """Generate AI interpretation (route by provider)."""
             if _report_provider == "ChatGPT (OpenAI)":
                 return _call_openai(
                     st.session_state.get("openai_api_key",""),
@@ -2830,22 +2939,22 @@ elif page == "📄  Report":
         for k, a in analyses.items():
             interp = a.get("interpretation","")
             if interp:
-                with st.expander(f"✅ {_mod_labels.get(k,k)} — kayıtlı yorum"):
+                with st.expander(f"✅ {_mod_labels.get(k,k)} — saved interpretation"):
                     st.markdown(f'<div class="interp-box">{interp.replace(chr(10),"<br>")}</div>',
                                 unsafe_allow_html=True)
 
         # Eksik yorumlar için "üret" butonları
         if _missing_interp:
-            st.info(f"Yorum eksik modüller: {', '.join(_mod_labels.get(k,k) for k in _missing_interp)}")
+            st.info(f"Missing interpretations: {', '.join(_mod_labels.get(k,k) for k in _missing_interp)}")
 
             _col_all, _col_sel = st.columns(2)
-            if _col_all.button("🤖 Tümü İçin AI Yorum Üret", use_container_width=True,
+            if _col_all.button("🤖 Generate AI Interpretation for All", use_container_width=True,
                                 key="ai_all_modules"):
-                _progress = st.progress(0, text="Başlıyor…")
+                _progress = st.progress(0, text="Starting…")
                 _total = len(_missing_interp)
                 for _i, _mk in enumerate(_missing_interp):
                     _progress.progress((_i) / _total,
-                                       text=f"{_mod_labels.get(_mk,_mk)} yorumlanıyor…")
+                                       text=f"Interpreting {_mod_labels.get(_mk,_mk)}…")
                     try:
                         _fn, _kw_fn = _INTERP_MAP[_mk]
                         _kw = _kw_fn(analyses[_mk])
@@ -2854,24 +2963,24 @@ elif page == "📄  Report":
                         st.session_state[f"interp_{_mk}"] = _text
                     except Exception as _e:
                         st.warning(f"{_mod_labels.get(_mk,_mk)}: {_e}")
-                _progress.progress(1.0, text="Tamamlandı ✅")
+                _progress.progress(1.0, text="Done ✅")
                 _persist_user_data(_current_user, _projects(),
                                    st.session_state.get(_user_key("current_project"), ""))
                 st.rerun()
 
             # Bireysel seçim
             _sel_missing = _col_sel.multiselect(
-                "Sadece bunlar için üret",
+                "Generate only for these",
                 options=_missing_interp,
                 format_func=lambda x: _mod_labels.get(x,x),
                 key="ai_sel_modules"
             )
-            if _sel_missing and st.button("🤖 Seçilenleri Üret", use_container_width=True,
+            if _sel_missing and st.button("🤖 Generate for Selected", use_container_width=True,
                                            key="ai_sel_run"):
-                _progress2 = st.progress(0, text="Başlıyor…")
+                _progress2 = st.progress(0, text="Starting…")
                 for _i, _mk in enumerate(_sel_missing):
                     _progress2.progress(_i / len(_sel_missing),
-                                        text=f"{_mod_labels.get(_mk,_mk)} yorumlanıyor…")
+                                        text=f"Interpreting {_mod_labels.get(_mk,_mk)}…")
                     try:
                         _fn, _kw_fn = _INTERP_MAP[_mk]
                         _kw = _kw_fn(analyses[_mk])
@@ -2880,33 +2989,33 @@ elif page == "📄  Report":
                         st.session_state[f"interp_{_mk}"] = _text
                     except Exception as _e:
                         st.warning(f"{_mod_labels.get(_mk,_mk)}: {_e}")
-                _progress2.progress(1.0, text="Tamamlandı ✅")
+                _progress2.progress(1.0, text="Done ✅")
                 _persist_user_data(_current_user, _projects(),
                                    st.session_state.get(_user_key("current_project"), ""))
                 st.rerun()
         else:
-            st.success("✅ Tüm modüllerin AI yorumu mevcut.")
+            st.success("✅ AI interpretations available for all modules.")
 
     st.divider()
 
     # ── Toplu / Executive Summary ──────────────────────────
     ak = st.session_state.get("api_key","")
-    st.markdown('<div class="sec">📋 Toplu AI Raporu (Executive Summary)</div>',
+    st.markdown('<div class="sec">📋 Bulk AI Report (Executive Summary)</div>',
                 unsafe_allow_html=True)
     exec_sum = proj.get("executive_summary","")
     if exec_sum:
         st.markdown(f'<div class="interp-box">{exec_sum.replace(chr(10),"<br>")}</div>',
                     unsafe_allow_html=True)
-        if st.button("🔄 Yeniden üret"):
+        if st.button("🔄 Regenerate"):
             exec_sum = ""
     if not exec_sum:
         if ak:
             _has_all = not _missing_interp   # True ise tüm modüllerin yorumu var
-            _btn_lbl = ("🤖 Toplu Rapor Üret (tüm modüller dahil)"
+            _btn_lbl = ("🤖 Generate Bulk Report (all modules included)"
                         if _has_all else
-                        "🤖 Executive Summary Üret (mevcut verilerle)")
+                        "🤖 Generate Executive Summary (with available data)")
             if st.button(_btn_lbl, use_container_width=True, key="exec_sum_btn"):
-                with st.spinner("Toplu rapor yazılıyor…"):
+                with st.spinner("Writing bulk report…"):
                     try:
                         text = interpret_full_project(ak, proj,
                                                       model=st.session_state.get(
@@ -2919,9 +3028,9 @@ elif page == "📄  Report":
                     except Exception as e:
                         st.error(str(e))
             if not _has_all:
-                st.caption("💡 Önce tüm modüllerin AI yorumunu üretirseniz toplu rapor daha kapsamlı olur.")
+                st.caption("💡 Generate AI interpretations for all modules first to produce a more comprehensive bulk report.")
         else:
-            proj_sum = st.text_area("Kendi özetinizi yazın (opsiyonel)",
+            proj_sum = st.text_area("Write your own summary (optional)",
                                      height=120, key="manual_exec_sum")
             if proj_sum.strip():
                 proj["executive_summary"] = proj_sum.strip()
