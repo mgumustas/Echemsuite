@@ -110,7 +110,7 @@ def load_calibration_data(filepath_or_dict):
 # ══════════════════════════════════════════════════════════════
 
 def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=None,
-                          unit='μM', output_dir='.'):
+                          unit='μM', output_dir='.', plot_style=None):
     """
     Kalibrasyon eğrisi, LOD, LOQ, hassasiyet hesabı.
 
@@ -166,6 +166,12 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
         sensitivity = sens_normalized
 
     # Artıklar grafiği (residual plot)
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 70)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     # Kalibrasyon eğrisi
@@ -176,12 +182,12 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
     # Hata çubukları
     if 'ip_uA_std' in cal_data.columns:
         ax1.errorbar(C, ip_mean, yerr=cal_data['ip_uA_std'].values,
-                     fmt='o', color=COLORS[0], capsize=4, label='Mean ± SD',
-                     markersize=7, zorder=5)
+                     fmt='o', color=_colors[0], capsize=4, label='Mean ± SD',
+                     markersize=max(5, int(_ms/14)), zorder=5)
     else:
-        ax1.scatter(C, ip_mean, color=COLORS[0], s=70, zorder=5, label='Experimental')
+        ax1.scatter(C, ip_mean, color=_colors[0], s=_ms, zorder=5, label='Experimental')
 
-    ax1.plot(C_fit, ip_fit, color=COLORS[1], linewidth=2,
+    ax1.plot(C_fit, ip_fit, color=_colors[1 % len(_colors)], linewidth=_lw, linestyle=_ls,
              label=f'ip = {slope:.4f}C + {intercept:.4f}\nr = {r:.5f}')
 
     # %95 güven aralığı (prediction interval)
@@ -189,7 +195,7 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
     t_crit  = 2.0   # ~t_{0.025, n-2} ≈ 2 for n≥10
     se_pred = s_yx * np.sqrt(1 + 1/n_pts + (C_fit - C.mean())**2 / np.sum((C - C.mean())**2))
     ax1.fill_between(C_fit, ip_fit - t_crit*se_pred, ip_fit + t_crit*se_pred,
-                     alpha=0.12, color=COLORS[1], label='95% PI')
+                     alpha=0.12, color=_colors[1 % len(_colors)], label='95% PI')
 
     # LOD ve LOQ çizgileri
     ax1.axvline(lod, color='green', linestyle=':', linewidth=1.5,
@@ -204,7 +210,7 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
 
     # Artıklar grafiği
     ax2 = axes[1]
-    ax2.scatter(C, residuals, color=COLORS[2], s=70)
+    ax2.scatter(C, residuals, color=_colors[2 % len(_colors)], s=_ms)
     ax2.axhline(0, color='black', linewidth=1.2)
     ax2.axhline(s_yx, color='gray', linestyle='--', linewidth=1, label=f'+S_y,x')
     ax2.axhline(-s_yx, color='gray', linestyle='--', linewidth=1, label=f'−S_y,x')
@@ -375,7 +381,7 @@ def recovery_analysis(recovery_data, slope, intercept, analyte_name='Analyte',
 # ══════════════════════════════════════════════════════════════
 
 def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
-                       analyte_name='Analyte', output_dir='.'):
+                       analyte_name='Analyte', output_dir='.', plot_style=None):
     """
     Standart ilave metodu ile numunedeki konsantrasyon hesabı.
 
@@ -416,14 +422,22 @@ def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
     print(f"\n▶ Numunedeki {analyte_name} = {C_sample:.4f} μM")
 
     # Grafik
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 80)
+
     fig, ax = plt.subplots(figsize=(7, 5))
     C_fit = np.linspace(-C_sample*1.3, C_add.max()*1.1, 200)
     ip_fit = slope * C_fit + intercept
 
-    ax.scatter(C_add, ip, color=COLORS[0], s=80, zorder=5, label='Experimental')
-    ax.plot(C_fit[C_fit >= 0], ip_fit[C_fit >= 0], color=COLORS[1], linewidth=2)
-    ax.plot(C_fit[C_fit <= 0], ip_fit[C_fit <= 0], color=COLORS[1], linewidth=2,
-            linestyle='--', alpha=0.6)
+    ax.scatter(C_add, ip, color=_colors[0], s=_ms, zorder=5, label='Experimental')
+    ax.plot(C_fit[C_fit >= 0], ip_fit[C_fit >= 0],
+            color=_colors[1 % len(_colors)], linewidth=_lw)
+    ax.plot(C_fit[C_fit <= 0], ip_fit[C_fit <= 0],
+            color=_colors[1 % len(_colors)], linewidth=_lw,
+            linestyle=_ls, alpha=0.6)
 
     # Kesim noktası
     ax.scatter(-C_sample, 0, color='red', s=120, zorder=6, marker='*',
@@ -453,7 +467,8 @@ def run_analytical_performance(calibration_source, analyte_name='Analyte',
                                 electrode_area_cm2=None, unit='μM',
                                 rsd_data=None, recovery_data=None,
                                 std_addition_data=None,
-                                output_dir='results_analytical'):
+                                output_dir='results_analytical',
+                                plot_style=None):
     """
     Tüm analitik performans hesaplarını çalıştır.
 
@@ -487,7 +502,7 @@ def run_analytical_performance(calibration_source, analyte_name='Analyte',
     cal_results = calibration_analysis(
         cal_data, analyte_name=analyte_name,
         electrode_area_cm2=electrode_area_cm2, unit=unit,
-        output_dir=output_dir
+        output_dir=output_dir, plot_style=plot_style
     )
     slope     = cal_results['slope']
     intercept = cal_results['intercept']
@@ -515,7 +530,7 @@ def run_analytical_performance(calibration_source, analyte_name='Analyte',
             additions_uM=std_addition_data['additions_uM'],
             ip_uA=std_addition_data['ip_uA'],
             analyte_name=analyte_name,
-            output_dir=output_dir
+            output_dir=output_dir, plot_style=plot_style
         )
 
     # Özet tablosu (yayın için)
