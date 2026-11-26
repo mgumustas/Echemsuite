@@ -48,14 +48,24 @@ _UNICODE_FALLBACK = str.maketrans({
     'ψ': 'psi', 'ω': 'omega',
     'Ω': 'Ohm', 'Δ': 'Delta', 'Σ': 'Sigma',
     '°': 'deg',
+    # Micro sign (U+00B5) — different codepoint from Greek mu (U+03BC) above
+    'µ': 'u',
+    # Em-dash and en-dash — not in latin-1
+    '—': '-', '–': '-',
+    # Latin Extended characters (Ševčík etc.)
+    'Š': 'S', 'š': 's', 'Č': 'C', 'č': 'c',
+    'Ž': 'Z', 'ž': 'z', 'ě': 'e', 'ř': 'r',
+    # Variation selector (U+FE0F) that often follows emojis
+    '️': '', '︎': '',
 })
 
 _EMOJI_RE = re.compile(
     "["
     u"\U0001F300-\U0001F9FF"   # misc symbols, emoticons
-    u"\U00002600-\U000027BF"   # misc symbols
+    u"\U00002600-\U000027BF"   # misc symbols (includes ✅ U+2705, ❌ U+274C, ⚠️ U+26A0)
     u"\U0001F600-\U0001F64F"
     u"\U0001F680-\U0001F6FF"
+    u"\U0000FE00-\U0000FE0F"   # variation selectors (U+FE0F often follows emojis)
     "]+",
     flags=re.UNICODE,
 )
