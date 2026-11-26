@@ -57,13 +57,16 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
                 system     = _SYSTEM,
                 messages   = [{"role": "user", "content": user_msg}],
             )
-            # opus-5-5 returns ThinkingBlocks before TextBlocks — skip non-text
-            text_blocks = [b for b in msg.content
-                           if getattr(b, "type", "") == "text" and hasattr(b, "text")]
-            if text_blocks:
-                return text_blocks[0].text.strip()
-            # fallback: try direct .text access
-            return msg.content[0].text.strip()
+            # opus-5-5 may return ThinkingBlocks before TextBlocks
+            # Iterate and return the first string .text we find
+            for block in msg.content:
+                try:
+                    t = block.text
+                    if isinstance(t, str):
+                        return t.strip()
+                except AttributeError:
+                    continue
+            return "⚠️ No text content in response."
         except Exception as e:
             last_err = e
             err_str = str(e).lower()
