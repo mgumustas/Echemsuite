@@ -1017,7 +1017,12 @@ elif page == "📊  Calibration & LOD/LOQ":
     with left:
         st.markdown('<div class="sec">Parameters</div>',unsafe_allow_html=True)
         analyte   = st.text_input("Analyte name",value="Analyte")
-        conc_unit = st.text_input("Concentration unit",value="μM")
+        _UNITS    = ["μM","mM","nM","mg/mL","μg/mL","ng/mL","mg/L","μg/L","ng/L","mol/L","mmol/L"]
+        _unit_sel = st.selectbox("Concentration unit", _UNITS,
+                                  index=_UNITS.index(st.session_state.get("cal_unit","μM")),
+                                  key="cal_unit_sel")
+        st.session_state["cal_unit"] = _unit_sel
+        conc_unit = _unit_sel
         area_cal  = st.number_input("Electrode area (cm²) — optional",
                                      value=0.0,min_value=0.0,format="%.4f")
     with right:
@@ -1247,7 +1252,12 @@ elif page == "➕  Standard Addition":
     with left:
         st.markdown('<div class="sec">Parameters</div>',unsafe_allow_html=True)
         sa_analyte=st.text_input("Analyte name",value="Analyte")
-        sa_cu     =st.text_input("Concentration unit",value="μM")
+        _SA_UNITS =["μM","mM","nM","mg/mL","μg/mL","ng/mL","mg/L","μg/L","ng/L","mol/L","mmol/L"]
+        _sa_u_sel =st.selectbox("Concentration unit",_SA_UNITS,
+                                 index=_SA_UNITS.index(st.session_state.get("sa_unit","μM")),
+                                 key="sa_unit_sel")
+        st.session_state["sa_unit"]=_sa_u_sel
+        sa_cu     =_sa_u_sel
     with right:
         st.markdown('<div class="sec">Input mode</div>',unsafe_allow_html=True)
         sa_mode=_input_mode("sa_mode")
