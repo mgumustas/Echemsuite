@@ -72,6 +72,7 @@ from ph_module          import run_ph_analysis
 from analytical_module  import run_analytical_performance, standard_addition, ich_q2_precision_validation
 from ai_interpreter     import (interpret_cv, interpret_eis, interpret_ph,
                                   interpret_calibration, interpret_standard_addition,
+                                  interpret_selectivity, interpret_stability, interpret_surface,
                                   interpret_full_project)
 from report_generator   import generate_reports
 
@@ -550,11 +551,18 @@ with st.sidebar:
 
     with st.expander("📋 CSV format guide"):
         st.markdown("""
-**CV:** `Potential`(V), `Current`(A) — one file per scan rate
-**EIS:** `Freq`(Hz), `Zreal`(Ω), `Zimag`(Ω)
-**pH:** `pH`, `Ep_V`, `ip_A`
-**Calibration:** `Concentration`, `ip_1`, `ip_2`, …
-**Std addition:** `Addition`(µM), `ip`(µA)
+| Module | Required columns | Units |
+|---|---|---|
+| **CV** | `Potential_V`, `Current_A` | V · A — one file per scan rate |
+| **EIS** | `Freq_Hz`, `Zreal_Ohm`, `Zimag_Ohm` | Hz · Ω |
+| **pH** | `pH`, `Ep_mV` | — · mV |
+| **Calibration** | `concentration_uM`, `ip_run1_uA`, `ip_run2_uA`, … | µM · µA |
+| **Std Addition** | `added_conc_uM`, `ip_uA` | µM · µA |
+| **Stability** | `Day`, `Signal_uA`, `SD_uA` | — · µA |
+| **Surface EIS** | `Zreal_Ohm`, `Zimag_Ohm` | Ω |
+| **Surface CV** | `Potential_V`, `Current_uA` | V · µA |
+
+💡 Use the **⬇️ Download CSV Template** buttons in each module for pre-filled examples.
         """)
 
 
@@ -931,6 +939,9 @@ elif page == "📈  CV — Scan Rate Study":
             p = os.path.join(tmpdir,f"cv_{int(rate)}mVs.csv")
             df.to_csv(p,index=False); disk_map[rate] = p
 
+    if disk_map:
+        if "cv" in _cur().get("analyses", {}):
+            st.warning("⚠️ A CV analysis is already saved for this project. Running again will overwrite it.")
     if disk_map and st.button("▶ Run CV Analysis",type="primary",use_container_width=True):
         with st.spinner("Analysing…"):
             out = os.path.join(tmpdir,"cv_out"); os.makedirs(out,exist_ok=True)
@@ -1057,6 +1068,9 @@ elif page == "🔵  EIS — Impedance":
             df.to_csv(p,index=False); file_dict[lbl]=p
         sign_z=1
 
+    if file_dict:
+        if "eis" in _cur().get("analyses", {}):
+            st.warning("⚠️ An EIS analysis is already saved for this project. Running again will overwrite it.")
     if file_dict and st.button("▶ Run EIS Analysis",type="primary",use_container_width=True):
         with st.spinner("Fitting…"):
             out=os.path.join(tmpdir,"eis_out"); os.makedirs(out,exist_ok=True)
@@ -1151,6 +1165,9 @@ elif page == "🧪  pH — Working pH":
         key="ph_col_fit")
     st.session_state["ph_custom_colors"] = [_ph_data_col, _ph_fit_col]
 
+    if ph_path:
+        if "ph" in _cur().get("analyses", {}):
+            st.warning("⚠️ A pH analysis is already saved for this project. Running again will overwrite it.")
     if ph_path and st.button("▶ Run pH Analysis",type="primary",use_container_width=True):
         with st.spinner("Analysing…"):
             out=os.path.join(tmpdir,"ph_out"); os.makedirs(out,exist_ok=True)
@@ -2320,6 +2337,9 @@ elif page == "📊  Calibration & LOD/LOQ":
                 else:
                     st.warning("Enter at least 1 complete row of data in the table.")
 
+    if cal_data:
+        if "cal" in _cur().get("analyses", {}):
+            st.warning("⚠️ A calibration analysis is already saved for this project. Running again will overwrite it.")
     if cal_data and st.button("▶ Run Calibration Analysis",type="primary",use_container_width=True):
         with st.spinner("Computing…"):
             tmpdir=tempfile.mkdtemp()
@@ -2415,6 +2435,9 @@ elif page == "➕  Standard Addition":
             additions=clean_sa.iloc[:,0].tolist()
             ip_vals  =clean_sa.iloc[:,1].tolist()
 
+    if additions and ip_vals:
+        if "sa" in _cur().get("analyses", {}):
+            st.warning("⚠️ A standard addition analysis is already saved for this project. Running again will overwrite it.")
     if additions and ip_vals and st.button("▶ Run Standard Addition",type="primary",use_container_width=True):
         with st.spinner("Computing…"):
             tmpdir=tempfile.mkdtemp()
@@ -2876,7 +2899,8 @@ elif page == "📄  Report":
 
     # ── Durum tablosu ────────────────────────────────────────
     _mod_labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
-                   "cal":"📊 Calibration","sa":"➕ Std Addition"}
+                   "cal":"📊 Calibration","sa":"➕ Std Addition",
+                   "sel":"🧬 Selectivity","stab":"📅 Stability","surf":"🔬 Surface Charact."}
     st.markdown("**Analyses ready for report:**")
     _missing_interp = []
     for k, a in analyses.items():
@@ -2916,6 +2940,21 @@ elif page == "📄  Report":
                                    lambda a: {"results": a.get("metrics",{}),
                                                "analyte": proj.get("notes","analyte"),
                                                "unit": "µM"}),
+            "sel": (interpret_selectivity,
+                                   lambda a: {"results": a.get("rows", []),
+                                               "analyte": proj.get("notes","analyte"),
+                                               "threshold_pct": float(
+                                                   str(a.get("metrics",{}).get("Threshold","5%"))
+                                                   .replace("±","").replace("%","").strip() or 5)}),
+            "stab":(interpret_stability,
+                                   lambda a: {"results": a.get("rows", []),
+                                               "analyte": a.get("metrics",{}).get("Analyte","analyte"),
+                                               "threshold_pct": float(
+                                                   str(a.get("metrics",{}).get("Min. threshold","90%"))
+                                                   .replace("%","").strip() or 90)}),
+            "surf":(interpret_surface,
+                                   lambda a: {"metrics": a.get("metrics",{}),
+                                               "electrode_name": proj.get("name","modified electrode")}),
         }
 
         def _run_interp(key, fn, kwargs):
@@ -2999,7 +3038,18 @@ elif page == "📄  Report":
     st.divider()
 
     # ── Toplu / Executive Summary ──────────────────────────
-    ak = st.session_state.get("api_key","")
+    # Resolve active key/model for whichever provider is selected
+    _exec_provider = st.session_state.get("ai_provider", "Claude (Anthropic)")
+    if _exec_provider == "ChatGPT (OpenAI)":
+        ak = st.session_state.get("openai_api_key", "")
+        _exec_model = st.session_state.get("gpt_model", "gpt-4o")
+    elif _exec_provider == "Gemini (Google)":
+        ak = st.session_state.get("gemini_api_key", "")
+        _exec_model = st.session_state.get("gemini_model", "gemini-2.0-flash")
+    else:
+        ak = st.session_state.get("api_key", "")
+        _exec_model = st.session_state.get("ai_model", "claude-opus-5-5")
+
     st.markdown('<div class="sec">📋 Bulk AI Report (Executive Summary)</div>',
                 unsafe_allow_html=True)
     exec_sum = proj.get("executive_summary","")
@@ -3010,16 +3060,24 @@ elif page == "📄  Report":
             exec_sum = ""
     if not exec_sum:
         if ak:
-            _has_all = not _missing_interp   # True ise tüm modüllerin yorumu var
+            _has_all = not _missing_interp
             _btn_lbl = ("🤖 Generate Bulk Report (all modules included)"
                         if _has_all else
                         "🤖 Generate Executive Summary (with available data)")
             if st.button(_btn_lbl, use_container_width=True, key="exec_sum_btn"):
                 with st.spinner("Writing bulk report…"):
                     try:
-                        text = interpret_full_project(ak, proj,
-                                                      model=st.session_state.get(
-                                                          "ai_model","claude-opus-5-5"))
+                        # Route through the active AI provider
+                        if _exec_provider == "ChatGPT (OpenAI)":
+                            text = _call_openai(ak, _exec_model,
+                                                interpret_full_project,
+                                                {"project": proj})
+                        elif _exec_provider == "Gemini (Google)":
+                            text = _call_gemini(ak, _exec_model,
+                                                interpret_full_project,
+                                                {"project": proj})
+                        else:
+                            text = interpret_full_project(ak, proj, model=_exec_model)
                         proj["executive_summary"] = text
                         _persist_user_data(_current_user, _projects(),
                                            st.session_state.get(
