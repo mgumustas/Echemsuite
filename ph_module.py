@@ -145,7 +145,8 @@ def load_ph_data_from_table(filepath):
 # 3. EP vs pH ANALİZİ (NERNST EĞİMİ)
 # ══════════════════════════════════════════════════════════════
 
-def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.'):
+def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.',
+                     plot_style=None):
     """
     Ep vs pH lineer regresyonu ve proton/elektron oranı hesabı.
 
@@ -207,6 +208,12 @@ def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.')
         print("  → Proton katılımı elektrona oranla yüksek (m > n)")
 
     # Grafik
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 80)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     # Ep vs pH
@@ -214,9 +221,9 @@ def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.')
     ph_fit = np.linspace(pH.min()-0.2, pH.max()+0.2, 100)
     ep_fit = slope * ph_fit + intercept
 
-    ax1.scatter(pH, Ep, color=COLORS[0], s=80, zorder=5, label='Experimental')
-    ax1.plot(ph_fit, ep_fit, color=COLORS[1], linewidth=2,
-             label=f'Fit: {slope:.2f} mV/pH\nR² = {r_sq:.5f}')
+    ax1.scatter(pH, Ep, color=_colors[0], s=_ms, zorder=5, label='Experimental')
+    ax1.plot(ph_fit, ep_fit, color=_colors[1 % len(_colors)], linewidth=_lw,
+             linestyle=_ls, label=f'Fit: {slope:.2f} mV/pH\nR² = {r_sq:.5f}')
 
     # Teorik Nernst çizgisi
     ep_nernst = theoretical_slope * (ph_fit - pH.mean()) + Ep.mean()
@@ -231,8 +238,9 @@ def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.')
     # ip vs pH
     ax2 = axes[1]
     ip_uA = ph_data['ip_A'].values * 1e6
-    ax2.scatter(pH, ip_uA, color=COLORS[2], s=80, zorder=5)
-    ax2.plot(pH, ip_uA, color=COLORS[2], linewidth=1.5, linestyle='-', alpha=0.6)
+    _c2 = _colors[2 % len(_colors)]
+    ax2.scatter(pH, ip_uA, color=_c2, s=_ms, zorder=5)
+    ax2.plot(pH, ip_uA, color=_c2, linewidth=1.5, linestyle='-', alpha=0.6)
 
     # Optimal pH işaretle
     opt_idx = np.argmax(np.abs(ip_uA))
@@ -269,7 +277,7 @@ def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.')
 # ══════════════════════════════════════════════════════════════
 
 def run_ph_analysis(source, n_electrons=2, peak_type='anodic',
-                    output_dir='results_ph', **kwargs):
+                    output_dir='results_ph', plot_style=None, **kwargs):
     """
     pH taraması analizini çalıştır.
 
@@ -311,7 +319,7 @@ def run_ph_analysis(source, n_electrons=2, peak_type='anodic',
 
     # Analiz
     results = analyze_ep_vs_ph(ph_data, n_electrons=n_electrons,
-                                output_dir=output_dir)
+                                output_dir=output_dir, plot_style=plot_style)
 
     print(f"\n{'═'*55}")
     print("pH ANALİZİ ÖZET")
