@@ -779,9 +779,9 @@ if page == "🏠  Home":
 
     st.write("")  # spacer
 
-    # Row 2 — 3 modules
+    # Row 2 — modules 3-5
     _cols2 = st.columns(3, gap="medium")
-    for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_MODULES[3:]):
+    for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_MODULES[3:6]):
         _done_cls = " tile-done" if _key and _key in done else ""
         _done_lbl = " ✓" if _key and _key in done else ""
         with _cols2[_i]:
@@ -794,6 +794,26 @@ if page == "🏠  Home":
             if st.button(f"Open {_title}", key=f"home_nav_{_i+3}", use_container_width=True):
                 st.session_state[_NAV_PENDING] = _nav
                 st.rerun()
+
+    st.write("")  # spacer
+
+    # Row 3 — modules 6+
+    _remaining = _MODULES[6:]
+    if _remaining:
+        _cols3 = st.columns(3, gap="medium")
+        for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_remaining):
+            _done_cls = " tile-done" if _key and _key in done else ""
+            _done_lbl = " ✓" if _key and _key in done else ""
+            with _cols3[_i]:
+                st.markdown(f"""
+<div class="tile-card{_done_cls}">
+  <div class="tile-icon">{_icon}</div>
+  <div class="tile-title">{_title}{_done_lbl}</div>
+  <div class="tile-desc">{_desc}</div>
+</div>""", unsafe_allow_html=True)
+                if st.button(f"Open {_title}", key=f"home_nav_{_i+6}", use_container_width=True):
+                    st.session_state[_NAV_PENDING] = _nav
+                    st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════
