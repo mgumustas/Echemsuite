@@ -3420,9 +3420,17 @@ elif page == "🔬  Surface Characterization":
     _sem_note_ai = st.session_state.get("sem_note", "")
     if _sem_note_ai:
         _surf_ai_metrics["SEM observation"] = _sem_note_ai
+    # SEM görüntüsü yüklenmiş ama not girilmemişse yine de metriğe ekle
+    _has_sem_bare = st.session_state.get("sem_bare_up") is not None
+    _has_sem_mod  = st.session_state.get("sem_mod_up")  is not None
+    if (_has_sem_bare or _has_sem_mod) and "SEM observation" not in _surf_ai_metrics:
+        _sem_imgs = []
+        if _has_sem_bare: _sem_imgs.append("bare electrode")
+        if _has_sem_mod:  _sem_imgs.append("modified electrode")
+        _surf_ai_metrics["SEM images available"] = ", ".join(_sem_imgs)
 
     if not _surf_ai_metrics:
-        st.info("💡 EIS veya CV verisi girin (Rct / Ipa alanlarını doldurun) — ardından AI yorumu üretebilirsiniz.")
+        st.info("💡 EIS veya CV verisi girin (Rct / Ipa alanlarını doldurun) ya da SEM gözlemini yazın — ardından AI yorumu üretebilirsiniz.")
     else:
         # Mevcut metrikleri göster
         with st.expander("📊 Metrics sent to AI", expanded=False):
@@ -3472,6 +3480,33 @@ elif page == "📄  Report":
             _missing_interp.append(k)
         if a.get("notes",""):
             st.caption(f"  📝 _{a['notes'][:120]}{'…' if len(a.get('notes','')) > 120 else ''}_")
+
+    # ── session-state only modules (sel / stab / surf) ───────────────────────
+    _ss_checks = [
+        ("sel",  "sel_results",  "sel_interp"),
+        ("stab", "stab_results", "stab_interp"),
+        ("surf", "rct_bare",     "surf_interp"),   # rct_bare > 0 → data present
+    ]
+    for _mk, _data_key, _interp_key in _ss_checks:
+        if _mk in analyses:
+            continue   # already shown above (saved via _save_analysis)
+        # Determine if data is present
+        _has_data = False
+        if _mk == "surf":
+            _has_data = (st.session_state.get("rct_bare", 0) > 0
+                         or st.session_state.get("surf_ipa_bare", 0) > 0
+                         or bool(st.session_state.get("sem_note", ""))
+                         or st.session_state.get("sem_bare_up") is not None)
+        else:
+            _has_data = bool(st.session_state.get(_data_key))
+        if not _has_data:
+            continue
+        _has_interp = bool(st.session_state.get(_interp_key, ""))
+        if _has_interp:
+            st.markdown(f"- 🤖 {_mod_labels.get(_mk,_mk)} ✅ *AI interpretation available*")
+        else:
+            st.markdown(f"- 📊 {_mod_labels.get(_mk,_mk)} ⚪ *No AI interpretation*")
+            _missing_interp.append(_mk)
 
     st.divider()
 
@@ -3697,7 +3732,7 @@ elif page == "📄  Report":
                 # Selectivity
                 if "sel_results" in st.session_state and st.session_state["sel_results"]:
                     _sr = st.session_state["sel_results"]
-                    _pass_pct = sum(1 for r in _sr if r.get("Status","") == "✅") / len(_sr) * 100 if _sr else 0
+                    _pass_pct = sum(1 for r in _sr if r.get("Status","").startswith("✅")) / len(_sr) * 100 if _sr else 0
                     _proj_for_report["analyses"]["sel"] = {
                         "metrics": {
                             "Analyte":          st.session_state.get("sel_analyte","—"),
