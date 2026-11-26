@@ -46,8 +46,9 @@ plt.rcParams.update({
     'savefig.bbox': 'tight',
 })
 
-COLORS = ['#1f4e79', '#c55a11', '#375623', '#7030a0', '#843c0c',
-          '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+# CSS ile senkronize ana palet — primary: #1a3a5c, secondary: #2b7cb8
+COLORS = ['#1a3a5c', '#c55a11', '#375623', '#7030a0', '#843c0c',
+          '#2b7cb8', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
 
 WATERMARK_TEXT  = '© SilverstoneLab'
 WATERMARK_ALPHA = 0.18   # şeffaflık: görünür ama göze batmaz
@@ -56,7 +57,7 @@ WATERMARK_ALPHA = 0.18   # şeffaflık: görünür ama göze batmaz
 def _add_watermark(fig):
     """Her şekle SilverstoneLab filigranı ekler."""
     fig.text(0.98, 0.01, WATERMARK_TEXT,
-             fontsize=8, color='#1f4e79', alpha=WATERMARK_ALPHA,
+             fontsize=8, color='#1a3a5c', alpha=WATERMARK_ALPHA,
              ha='right', va='bottom', style='italic',
              transform=fig.transFigure)
 
