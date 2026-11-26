@@ -155,7 +155,9 @@ def fit_eis(df, label='Electrode', output_dir='.', p0=None):
         p0 = [Rs0, Rct0, Q0, n0, sigma0]
 
     bounds = (
-        [0,    0,    1e-10, 0.5,  0],
+        # n_CPE alt sınırı 0.5→0.3: saf difüzyon (n=0.5) davranışı ve
+        # yüksek yüzey heterojenliği gösteren sistemler kapsanır (Hirschorn 2010).
+        [0,    0,    1e-10, 0.3,  0],
         [1e6,  1e8,  1e-2,  1.0,  1e6]
     )
 
@@ -188,8 +190,11 @@ def fit_eis(df, label='Electrode', output_dir='.', p0=None):
         }
 
         # Yüzey kapasitansı (CPE → C_eff dönüşümü)
-        # C_eff = Q^(1/n) × Rct^((1-n)/n)
-        C_eff = Q_f**(1/n_f) * Rct_f**((1-n_f)/n_f)
+        # Randles devresi için doğru formül (Brug et al., JECS 1984):
+        #   C_eff = Q^(1/n) × (1/Rs + 1/Rct)^((n-1)/n)
+        # NOT: Brug'un basit formülü [Q^(1/n) × Rct^((1-n)/n)] sadece
+        # Rs//CPE topolojisi için geçerlidir; Randles devresinde hatalı sonuç verir.
+        C_eff = Q_f**(1/n_f) * (1/Rs_f + 1/Rct_f)**((n_f - 1)/n_f)
         params['C_eff_F'] = C_eff
 
         return params
@@ -243,7 +248,7 @@ def plot_nyquist_comparison(fit_results, output_dir='.', filename='eis_nyquist.p
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, filename)
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"  Nyquist grafiği: {out_path}")
 
@@ -308,7 +313,7 @@ def plot_bode(fit_results, output_dir='.', filename='eis_bode.png', plot_style=N
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, filename)
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"  Bode grafiği: {out_path}")
 
@@ -335,7 +340,7 @@ def plot_rct_comparison(fit_results, output_dir='.', plot_style=None):
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'eis_rct_comparison.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"  Rct karşılaştırma grafiği: {out_path}")
 
