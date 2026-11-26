@@ -34,7 +34,7 @@ plt.rcParams.update({
     'figure.dpi': 150, 'savefig.dpi': 300, 'savefig.bbox': 'tight',
 })
 
-COLORS = ['#1f4e79', '#c55a11', '#375623', '#7030a0', '#843c0c',
+COLORS = ['#1a3a5c', '#c55a11', '#375623', '#7030a0', '#843c0c',
           '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
 
 WATERMARK_TEXT  = '© SilverstoneLab'
@@ -43,7 +43,7 @@ WATERMARK_ALPHA = 0.18
 def _add_watermark(fig):
     """Her sekle SilverstoneLab filigrani ekler."""
     fig.text(0.98, 0.01, WATERMARK_TEXT,
-             fontsize=8, color='#1f4e79', alpha=WATERMARK_ALPHA,
+             fontsize=8, color='#1a3a5c', alpha=WATERMARK_ALPHA,
              ha='right', va='bottom', style='italic',
              transform=fig.transFigure)
 
@@ -257,7 +257,7 @@ def analyze_ep_vs_ph(ph_data, n_electrons=2, temperature=298.15, output_dir='.',
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'ph_analysis.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"\n  Grafik kaydedildi: {out_path}")
 
