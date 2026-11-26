@@ -2859,47 +2859,50 @@ elif page == "🧬  Selectivity":
                 "Upload selectivity CSV", type=["csv"], key="sel_csv_up"
             )
             if _sel_up:
-                try:
-                    import io as _io_sel_up
-                    _sel_up.seek(0)
-                    _sel_raw = _sel_up.read().decode("utf-8", errors="replace")
-                    # Metadata satırından referans sinyali oku
-                    _ref_from_csv = None
-                    for _line in _sel_raw.splitlines():
-                        _line = _line.strip()
-                        if _line.lower().startswith("# reference_signal_ua:"):
+                # Sadece yeni bir dosya yüklendiğinde işle; aynı dosyaysa rerun yok
+                if st.session_state.get("sel_csv_loaded") != _sel_up.name:
+                    try:
+                        import io as _io_sel_up
+                        _sel_raw = _sel_up.read().decode("utf-8", errors="replace")
+                        # Metadata satırından referans sinyali oku
+                        _ref_from_csv = None
+                        for _line in _sel_raw.splitlines():
+                            _line = _line.strip()
+                            if _line.lower().startswith("# reference_signal_ua:"):
+                                try:
+                                    _ref_from_csv = float(_line.split(":", 1)[1].strip())
+                                except ValueError:
+                                    pass
+                                break
+                        _df_sel = pd.read_csv(_io_sel_up.BytesIO(_sel_raw.encode("utf-8")), comment="#")
+                        # Normalize sütun isimleri
+                        _df_sel.columns = [c.strip() for c in _df_sel.columns]
+                        _name_col = _df_sel.columns[0]
+                        _conc_col = _df_sel.columns[1] if len(_df_sel.columns) > 1 else None
+                        _sig_col  = _df_sel.columns[2] if len(_df_sel.columns) > 2 else None
+                        _n_loaded = len(_df_sel)
+                        # Session state'e yaz → widget'lar otomatik dolacak
+                        st.session_state["sel_n_int"] = _n_loaded
+                        for _idx, _row in _df_sel.iterrows():
+                            st.session_state[f"sel_int_name_{_idx}"] = str(_row[_name_col]).strip()
                             try:
-                                _ref_from_csv = float(_line.split(":", 1)[1].strip())
-                            except ValueError:
-                                pass
-                            break
-                    _df_sel = pd.read_csv(_io_sel_up.BytesIO(_sel_raw.encode("utf-8")), comment="#")
-                    # Normalize sütun isimleri
-                    _df_sel.columns = [c.strip() for c in _df_sel.columns]
-                    _name_col = _df_sel.columns[0]
-                    _conc_col = _df_sel.columns[1] if len(_df_sel.columns) > 1 else None
-                    _sig_col  = _df_sel.columns[2] if len(_df_sel.columns) > 2 else None
-                    _n_loaded = len(_df_sel)
-                    # Session state'e yaz → widget'lar otomatik dolacak
-                    st.session_state["sel_n_int"] = _n_loaded
-                    for _idx, _row in _df_sel.iterrows():
-                        st.session_state[f"sel_int_name_{_idx}"] = str(_row[_name_col]).strip()
-                        try:
-                            st.session_state[f"sel_int_conc_{_idx}"] = float(_row[_conc_col]) if _conc_col else 100.0
-                        except (TypeError, ValueError):
-                            st.session_state[f"sel_int_conc_{_idx}"] = 100.0
-                        try:
-                            st.session_state[f"sel_int_sig_{_idx}"] = float(_row[_sig_col]) if _sig_col else 0.0
-                        except (TypeError, ValueError):
-                            st.session_state[f"sel_int_sig_{_idx}"] = 0.0
-                    # Referans sinyal varsa widget'a yaz
-                    if _ref_from_csv is not None:
-                        st.session_state["sel_ref_sig"] = _ref_from_csv
-                    _ref_msg = f" | Referans sinyal: {_ref_from_csv:.4f} µA" if _ref_from_csv is not None else " | ⚠️ Referans sinyal CSV'de bulunamadı — aşağıdaki alana giriniz."
-                    st.success(f"✓ {_n_loaded} interferent yüklendi{_ref_msg}")
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"CSV okunamadı: {_e}")
+                                st.session_state[f"sel_int_conc_{_idx}"] = float(_row[_conc_col]) if _conc_col else 100.0
+                            except (TypeError, ValueError):
+                                st.session_state[f"sel_int_conc_{_idx}"] = 100.0
+                            try:
+                                st.session_state[f"sel_int_sig_{_idx}"] = float(_row[_sig_col]) if _sig_col else 0.0
+                            except (TypeError, ValueError):
+                                st.session_state[f"sel_int_sig_{_idx}"] = 0.0
+                        # Referans sinyal varsa widget'a yaz
+                        if _ref_from_csv is not None:
+                            st.session_state["sel_ref_sig"] = _ref_from_csv
+                        # Yüklenen dosya adını kaydet — bir sonraki rerun'da tekrar işleme
+                        st.session_state["sel_csv_loaded"] = _sel_up.name
+                        _ref_msg = f" | Referans sinyal: {_ref_from_csv:.4f} µA" if _ref_from_csv is not None else " | ⚠️ Referans sinyal CSV'de bulunamadı — aşağıdaki alana giriniz."
+                        st.success(f"✓ {_n_loaded} interferent yüklendi{_ref_msg}")
+                        st.rerun()
+                    except Exception as _e:
+                        st.error(f"CSV okunamadı: {_e}")
 
     _sel_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="sel_analyte")
     _sel_unit    = st.text_input("Unit", value=st.session_state.get("cal_unit","µM"), key="sel_unit_inp")
