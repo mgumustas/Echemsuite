@@ -589,14 +589,29 @@ with st.sidebar:
         st.session_state.openai_api_key = _gk
         if _gk:
             st.caption("✅ OpenAI key active")
-            _GPT_MODELS = ["gpt-4o","gpt-4o-mini","gpt-4-turbo","gpt-3.5-turbo"]
-            if "gpt_model" not in st.session_state:
+            _GPT_FALLBACK = ["gpt-4o","gpt-4o-mini","gpt-4-turbo","gpt-3.5-turbo"]
+            @st.cache_data(show_spinner=False, ttl=3600)
+            def _fetch_openai_models(key: str):
+                try:
+                    import openai as _oai
+                    _client = _oai.OpenAI(api_key=key)
+                    _all = [m.id for m in _client.models.list()
+                            if m.id.startswith("gpt-") and "instruct" not in m.id]
+                    _all.sort(reverse=True)
+                    return _all if _all else None
+                except Exception:
+                    return None
+            _fetched_gpt = _fetch_openai_models(_gk)
+            _GPT_MODELS = _fetched_gpt if _fetched_gpt else _GPT_FALLBACK
+            if "gpt_model" not in st.session_state or st.session_state.gpt_model not in _GPT_MODELS:
                 st.session_state.gpt_model = _GPT_MODELS[0]
             st.session_state.gpt_model = st.selectbox(
                 "Model", _GPT_MODELS,
                 index=_GPT_MODELS.index(st.session_state.gpt_model)
                       if st.session_state.gpt_model in _GPT_MODELS else 0,
                 key="gpt_model_select")
+            if _fetched_gpt:
+                st.caption(f"📡 {len(_fetched_gpt)} model API'dan alındı")
         else:
             st.caption("platform.openai.com → API Keys")
 
@@ -606,14 +621,33 @@ with st.sidebar:
         st.session_state.gemini_api_key = _gmk
         if _gmk:
             st.caption("✅ Gemini key active")
-            _GEM_MODELS = ["gemini-3.8-flash","gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"]
-            if "gemini_model" not in st.session_state:
+            # Try to fetch available models from API; fall back to known list
+            _GEM_FALLBACK = ["gemini-3.8-flash","gemini-2.5-flash","gemini-2.5-pro",
+                             "gemini-2.0-flash","gemini-1.5-pro","gemini-1.5-flash"]
+            @st.cache_data(show_spinner=False, ttl=3600)
+            def _fetch_gemini_models(key: str):
+                try:
+                    import google.generativeai as _g
+                    _g.configure(api_key=key)
+                    _names = sorted(
+                        [m.name.replace("models/", "") for m in _g.list_models()
+                         if "generateContent" in getattr(m, "supported_generation_methods", [])
+                         and "flash" in m.name or "pro" in m.name],
+                        reverse=True)
+                    return _names if _names else None
+                except Exception:
+                    return None
+            _fetched = _fetch_gemini_models(_gmk)
+            _GEM_MODELS = _fetched if _fetched else _GEM_FALLBACK
+            if "gemini_model" not in st.session_state or st.session_state.gemini_model not in _GEM_MODELS:
                 st.session_state.gemini_model = _GEM_MODELS[0]
             st.session_state.gemini_model = st.selectbox(
                 "Model", _GEM_MODELS,
                 index=_GEM_MODELS.index(st.session_state.gemini_model)
                       if st.session_state.gemini_model in _GEM_MODELS else 0,
                 key="gemini_model_select")
+            if _fetched:
+                st.caption(f"📡 {len(_fetched)} model API'dan alındı")
         else:
             st.caption("aistudio.google.com → Get API key")
 
