@@ -79,7 +79,7 @@ def load_calibration_data(filepath_or_dict):
             rows.append({
                 'conc_uM':      float(conc),
                 'ip_uA_mean':   vals.mean(),
-                'ip_uA_std':    vals.std(ddof=1),
+                'ip_uA_std':    vals.std(ddof=1) if len(vals) > 1 else 0.0,
                 'ip_uA_values': vals.tolist(),
                 'n_rep':        len(vals)
             })
@@ -180,12 +180,19 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
     ip_fit = slope * C_fit + intercept
 
     # Hata çubukları
-    if 'ip_uA_std' in cal_data.columns:
-        ax1.errorbar(C, ip_mean, yerr=cal_data['ip_uA_std'].values,
-                     fmt='o', color=_colors[0], capsize=4, label='Mean ± SD',
-                     markersize=max(5, int(_ms/14)), zorder=5)
+    # ip_uA_std sütunu her zaman vardır; NaN (n=1, ddof=1) → 0 ile değiştir
+    _std_raw = cal_data['ip_uA_std'].values if 'ip_uA_std' in cal_data.columns else np.zeros(len(C))
+    _std_vals = np.where(np.isnan(_std_raw), 0.0, _std_raw)
+    _ms_pt = max(6, int(np.sqrt(_ms / np.pi) * 2))   # s→markersize dönüşümü
+
+    if _std_vals.sum() > 0:
+        ax1.errorbar(C, ip_mean, yerr=_std_vals,
+                     fmt='o', color=_colors[0], capsize=5, capthick=1.5,
+                     elinewidth=1.5, markersize=_ms_pt, zorder=5,
+                     label='Mean ± SD')
     else:
-        ax1.scatter(C, ip_mean, color=_colors[0], s=_ms, zorder=5, label='Experimental')
+        ax1.scatter(C, ip_mean, color=_colors[0], s=_ms, zorder=5,
+                    label='Experimental (tek tekrar)')
 
     ax1.plot(C_fit, ip_fit, color=_colors[1 % len(_colors)], linewidth=_lw, linestyle=_ls,
              label=f'ip = {slope:.4f}C + {intercept:.4f}\nr = {r:.5f}')
