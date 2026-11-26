@@ -510,9 +510,9 @@ with st.sidebar:
         "🧪  pH — Working pH",
         "📊  Calibration & LOD/LOQ",
         "➕  Standard Addition",
-        "🧬  Seçicilik / İnterferans",
-        "📅  Stabilite",
-        "🔬  Yüzey Karakterizasyonu",
+        "🧬  Selectivity",
+        "📅  Stability",
+        "🔬  Surface Characterization",
         "📄  Report",
     ]
     _NAV_KEY     = f"nav_radio_{_current_user}"
@@ -755,9 +755,9 @@ if page == "🏠  Home":
         ("🧪", "pH Study",            "Ep/pH slope · Nernst · optimal pH",  "🧪  pH — Working pH",         "ph"),
         ("📊", "Calibration",         "LOD · LOQ · linear range · r",       "📊  Calibration & LOD/LOQ",   "cal"),
         ("➕", "Standard Addition",   "C_sample · recovery · 95 % PI",      "➕  Standard Addition",        "sa"),
-        ("🧬", "Seçicilik",          "İnterferant · % sinyal değişimi",     "🧬  Seçicilik / İnterferans",  "sel"),
-        ("📅", "Stabilite",           "Günlük % recovery · RSD trendi",      "📅  Stabilite",                "stab"),
-        ("🔬", "Yüzey Karakterizasyonu", "SEM · EIS · bare vs modified CV",  "🔬  Yüzey Karakterizasyonu",   "surf"),
+        ("🧬", "Selectivity",         "Interferents · % signal change",      "🧬  Selectivity",              "sel"),
+        ("📅", "Stability",           "Daily % recovery · RSD trend",        "📅  Stability",                "stab"),
+        ("🔬", "Surface Charact.",    "SEM · EIS · bare vs modified CV",     "🔬  Surface Characterization", "surf"),
         ("📄", "Report",              "PDF + Word  ·  all plots embedded",   "📄  Report",                  None),
     ]
 
@@ -1590,7 +1590,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                          "Ortalama (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
                          "%RSD": round(v.get("rsd", 0), 2),
                          "Tekrarlılık (≤2%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
-                        for k,v in _intra_r.items()
+                        for k,v in _intra_r.items() if isinstance(v, dict)
                     ])
                     st.caption("**Tekrar Edilebilirlik (Gün İçi)**")
                     st.dataframe(_intra_df, hide_index=True, use_container_width=True)
@@ -1600,7 +1600,7 @@ elif page == "📊  Calibration & LOD/LOQ":
                          "Ortalama (µA)": round(v.get("mean", v.get("mean_ip", 0)), 4),
                          "%RSD": round(v.get("rsd", 0), 2),
                          "Ara Kesinlik (≤5%)": "✅" if str(v.get("pass","False")) == "True" else "⚠️"}
-                        for k,v in _inter_r.items()
+                        for k,v in _inter_r.items() if isinstance(v, dict)
                     ])
                     st.caption("**Ara Kesinlik (Günler Arası)**")
                     st.dataframe(_inter_df, hide_index=True, use_container_width=True)
@@ -2379,33 +2379,33 @@ elif page == "➕  Standard Addition":
 # ═══════════════════════════════════════════════════════════
 # 🧬  SEÇİCİLİK / İNTERFERANS
 # ═══════════════════════════════════════════════════════════
-elif page == "🧬  Seçicilik / İnterferans":
-    st.title("🧬 Seçicilik / İnterferans Çalışması")
+elif page == "🧬  Selectivity":
+    st.title("🧬 Selectivity / Interferent Study")
     st.caption(
-        "Analitinizin sinyaline potansiyel interferantların etkisini ölçün. "
-        "Kabul kriteri: % sinyal değişimi ≤ ±5 % (veya kullanıcı tanımlı eşik)."
+        "Quantify the effect of potential interferents on the analyte signal. "
+        "Acceptance criterion: % signal change ≤ ±5 % (user-adjustable)."
     )
 
-    _sel_analyte = st.text_input("Analit adı", value=st.session_state.get("sel_analyte","Dopamin"), key="sel_analyte")
-    _sel_unit    = st.text_input("Birim", value=st.session_state.get("cal_unit","µM"), key="sel_unit_inp")
-    _sel_conc    = st.number_input("Analit konsantrasyonu (µM)", value=10.0, min_value=0.0001, format="%.4f", key="sel_conc")
-    _sel_ref     = st.number_input("Referans sinyal — analit tek başına (µA)", value=0.0, format="%.4f", key="sel_ref_sig")
-    _sel_thresh  = st.number_input("Kabul eşiği (± %)", value=5.0, min_value=0.1, max_value=50.0, format="%.1f", key="sel_thresh")
+    _sel_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="sel_analyte")
+    _sel_unit    = st.text_input("Unit", value=st.session_state.get("cal_unit","µM"), key="sel_unit_inp")
+    _sel_conc    = st.number_input("Analyte concentration (µM)", value=10.0, min_value=0.0001, format="%.4f", key="sel_conc")
+    _sel_ref     = st.number_input("Reference signal — analyte alone (µA)", value=0.0, format="%.4f", key="sel_ref_sig")
+    _sel_thresh  = st.number_input("Acceptance threshold (± %)", value=5.0, min_value=0.1, max_value=50.0, format="%.1f", key="sel_thresh")
 
-    st.markdown("#### İnterferant Tablosu")
-    st.caption("Her satıra bir interferant. Konsantrasyon ve ölçülen pik akımı (µA) girin.")
+    st.markdown("#### Interferent Table")
+    st.caption("One interferent per row. Enter concentration and measured peak current (µA).")
 
-    _n_int = st.number_input("İnterferant sayısı", min_value=1, max_value=20, value=6, step=1, key="sel_n_int")
+    _n_int = st.number_input("Number of interferents", min_value=1, max_value=20, value=6, step=1, key="sel_n_int")
     _int_rows = []
     _icols = st.columns([3, 2, 2])
-    _icols[0].markdown("**İnterferant**")
-    _icols[1].markdown("**Konsantrasyon (µM)**")
-    _icols[2].markdown("**Sinyal (µA)**")
+    _icols[0].markdown("**Interferent**")
+    _icols[1].markdown("**Concentration (µM)**")
+    _icols[2].markdown("**Signal (µA)**")
     for _i in range(int(_n_int)):
         _c1,_c2,_c3 = st.columns([3,2,2])
-        _iname = _c1.text_input(f"İnterferant {_i+1}", key=f"sel_int_name_{_i}",
+        _iname = _c1.text_input(f"Interferent {_i+1}", key=f"sel_int_name_{_i}",
                                  label_visibility="collapsed",
-                                 placeholder=["Askorbik Asit","Ürik Asit","Epinefrin","Glukoz","NaCl","Üre"][_i] if _i < 6 else f"İnt-{_i+1}")
+                                 placeholder=["Ascorbic Acid","Uric Acid","Epinephrine","Glucose","NaCl","Urea"][_i] if _i < 6 else f"Int-{_i+1}")
         _iconc = _c2.number_input("", value=100.0, min_value=0.0, format="%.2f",
                                    key=f"sel_int_conc_{_i}", label_visibility="collapsed")
         _isig  = _c3.number_input("", value=0.0, format="%.4f",
@@ -2413,22 +2413,22 @@ elif page == "🧬  Seçicilik / İnterferans":
         if _iname and _isig != 0.0:
             _int_rows.append((_iname, _iconc, _isig))
 
-    if st.button("▶ Seçicilik Hesapla", type="primary", use_container_width=True, key="btn_sel_run"):
+    if st.button("▶ Run Selectivity", type="primary", use_container_width=True, key="btn_sel_run"):
         if not _int_rows:
-            st.warning("En az bir interferant satırı doldurun.")
+            st.warning("Fill in at least one interferent row.")
         elif _sel_ref <= 0:
-            st.warning("Referans sinyal (analit tek başına) > 0 olmalı.")
+            st.warning("Reference signal (analyte alone) must be > 0.")
         else:
             _sel_results = []
             for _iname, _iconc, _isig in _int_rows:
                 _delta_pct = (_isig - _sel_ref) / _sel_ref * 100
                 _passed    = abs(_delta_pct) <= _sel_thresh
                 _sel_results.append({
-                    "İnterferant":          _iname,
-                    "Konsentrasyon (µM)":   _iconc,
-                    "Sinyal (µA)":          round(_isig, 4),
-                    "% Sinyal Değişimi":    round(_delta_pct, 2),
-                    "Durum":                "✅" if _passed else "⚠️ Fail",
+                    "Interferent":        _iname,
+                    "Concentration (µM)": _iconc,
+                    "Signal (µA)":        round(_isig, 4),
+                    "% Signal Change":    round(_delta_pct, 2),
+                    "Status":             "✅ Pass" if _passed else "⚠️ Fail",
                 })
             st.session_state["sel_results"] = _sel_results
             st.session_state["sel_ref"]     = _sel_ref
@@ -2439,62 +2439,59 @@ elif page == "🧬  Seçicilik / İnterferans":
         _sdf = pd.DataFrame(_sr)
         st.dataframe(_sdf, hide_index=True, use_container_width=True)
 
-        _pass_all = all(r["Durum"] == "✅" for r in _sr)
+        _pass_all = all(r["Status"].startswith("✅") for r in _sr)
         if _pass_all:
-            st.success(f"✅ Tüm interferantlar ± {st.session_state.get('sel_thresh',5):.1f}% kriterini karşılıyor.")
+            st.success(f"✅ All interferents within ± {st.session_state.get('sel_thresh',5):.1f}% threshold.")
         else:
-            _fail_list = [r["İnterferant"] for r in _sr if r["Durum"] != "✅"]
-            st.warning(f"⚠️ Kriter dışı interferantlar: {', '.join(_fail_list)}")
+            _fail_list = [r["Interferent"] for r in _sr if not r["Status"].startswith("✅")]
+            st.warning(f"⚠️ Interferents outside criterion: {', '.join(_fail_list)}")
 
-        # Bar chart
         import matplotlib.pyplot as plt
         _fig_sel, _ax_sel = plt.subplots(figsize=(max(6, len(_sr)*0.9), 4))
-        _names   = [r["İnterferant"] for r in _sr]
-        _deltas  = [r["% Sinyal Değişimi"] for r in _sr]
+        _names   = [r["Interferent"] for r in _sr]
+        _deltas  = [r["% Signal Change"] for r in _sr]
         _colors_bar = ["#2ecc71" if abs(d) <= st.session_state.get("sel_thresh",5) else "#e74c3c" for d in _deltas]
         _ax_sel.bar(_names, _deltas, color=_colors_bar, edgecolor="white", linewidth=0.5)
-        _ax_sel.axhline(y=st.session_state.get("sel_thresh",5),  color="#e74c3c", linestyle="--", linewidth=1.2, label=f"+{st.session_state.get('sel_thresh',5):.0f}%")
+        _ax_sel.axhline(y= st.session_state.get("sel_thresh",5), color="#e74c3c", linestyle="--", linewidth=1.2, label=f"+{st.session_state.get('sel_thresh',5):.0f}%")
         _ax_sel.axhline(y=-st.session_state.get("sel_thresh",5), color="#e74c3c", linestyle="--", linewidth=1.2, label=f"-{st.session_state.get('sel_thresh',5):.0f}%")
         _ax_sel.axhline(y=0, color="gray", linewidth=0.8)
-        _ax_sel.set_xlabel("İnterferant", fontsize=10)
-        _ax_sel.set_ylabel("% Sinyal Değişimi", fontsize=10)
-        _ax_sel.set_title(f"{_sel_analyte} — Seçicilik Çalışması", fontsize=11, fontweight="bold")
+        _ax_sel.set_xlabel("Interferent", fontsize=10)
+        _ax_sel.set_ylabel("% Signal Change", fontsize=10)
+        _ax_sel.set_title(f"{_sel_analyte} — Selectivity Study", fontsize=11, fontweight="bold")
         plt.xticks(rotation=35, ha="right", fontsize=8)
         _ax_sel.legend(fontsize=8)
         plt.tight_layout()
         st.pyplot(_fig_sel)
         plt.close(_fig_sel)
 
-        # CSV indir
         _sel_csv = _sdf.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ CSV İndir", _sel_csv,
+        st.download_button("⬇️ Download CSV", _sel_csv,
                            file_name=f"{_sel_analyte}_selectivity.csv",
                            mime="text/csv", use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════
 # 📅  STABİLİTE
 # ═══════════════════════════════════════════════════════════
-elif page == "📅  Stabilite":
-    st.title("📅 Sensör Stabilitesi")
+elif page == "📅  Stability":
+    st.title("📅 Sensor Stability")
     st.caption(
-        "Sensörün zaman içindeki performans kaybını izleyin. "
-        "Kabul kriteri: Başlangıç sinyalinin ≥ 90% korunması (veya kullanıcı tanımlı)."
+        "Track performance loss of the sensor over time. "
+        "Acceptance criterion: ≥ 90% of initial signal retained (user-adjustable)."
     )
 
-    _stab_analyte = st.text_input("Analit", value=st.session_state.get("sel_analyte","Dopamin"), key="stab_analyte")
-    _stab_nominal = st.number_input("Test konsantrasyonu (µM)", value=10.0, min_value=0.001, format="%.4f", key="stab_nominal")
-    _stab_thresh  = st.number_input("Min. kabul edilen % recovery", value=90.0, min_value=50.0, max_value=100.0, format="%.1f", key="stab_thresh")
-    _stab_unit    = st.text_input("Birim", value="µM", key="stab_unit")
+    _stab_analyte = st.text_input("Analyte", value=st.session_state.get("sel_analyte","Dopamine"), key="stab_analyte")
+    _stab_nominal = st.number_input("Test concentration (µM)", value=10.0, min_value=0.001, format="%.4f", key="stab_nominal")
+    _stab_thresh  = st.number_input("Min. accepted % recovery", value=90.0, min_value=50.0, max_value=100.0, format="%.1f", key="stab_thresh")
+    _stab_unit    = st.text_input("Unit", value="µM", key="stab_unit")
 
-    # CSV upload alternatifi
-    _stab_csv_up = st.file_uploader("Stabilite CSV yükle (Gün, Ortalama_sinyal_uA, [SD])", type="csv", key="stab_csv_up")
+    _stab_csv_up = st.file_uploader("Upload stability CSV (Day, Mean_signal_uA, [SD])", type="csv", key="stab_csv_up")
     _stab_rows = []
     if _stab_csv_up:
         try:
             _stab_df_up = pd.read_csv(_stab_csv_up)
             _cols = [c.lower().strip() for c in _stab_df_up.columns]
-            _day_col  = next((i for i,c in enumerate(_cols) if "gün" in c or "day" in c or "gun" in c), 0)
-            _sig_col  = next((i for i,c in enumerate(_cols) if "signal" in c or "sinyal" in c or "ip" in c or "mean" in c or "orta" in c), 1)
+            _day_col  = next((i for i,c in enumerate(_cols) if "day" in c or "gün" in c or "gun" in c), 0)
+            _sig_col  = next((i for i,c in enumerate(_cols) if "signal" in c or "sinyal" in c or "ip" in c or "mean" in c), 1)
             _sd_col   = next((i for i,c in enumerate(_cols) if "sd" in c or "std" in c), None)
             for _, _row in _stab_df_up.iterrows():
                 try:
@@ -2504,15 +2501,15 @@ elif page == "📅  Stabilite":
                     _stab_rows.append((_d, _s, _sd))
                 except (ValueError, TypeError):
                     continue
-            st.success(f"✓ {len(_stab_rows)} gün yüklendi")
+            st.success(f"✓ {len(_stab_rows)} days loaded")
         except Exception as _e:
-            st.error(f"CSV okuma hatası: {_e}")
+            st.error(f"CSV read error: {_e}")
 
     if not _stab_rows:
-        st.markdown("**veya manuel girin:**")
-        _n_days = st.number_input("Ölçüm günü sayısı", min_value=2, max_value=30, value=7, step=1, key="stab_n_days")
+        st.markdown("**or enter manually:**")
+        _n_days = st.number_input("Number of measurement days", min_value=2, max_value=30, value=7, step=1, key="stab_n_days")
         _sc1, _sc2, _sc3 = st.columns([2, 2, 2])
-        _sc1.markdown("**Gün**"); _sc2.markdown("**Ortalama (µA)**"); _sc3.markdown("**SD (µA)**")
+        _sc1.markdown("**Day**"); _sc2.markdown("**Mean (µA)**"); _sc3.markdown("**SD (µA)**")
         for _i in range(int(_n_days)):
             _d1, _d2, _d3 = st.columns([2, 2, 2])
             _day_v  = _d1.number_input("", value=_i * (7 if _n_days > 7 else 1), min_value=0,
@@ -2524,9 +2521,9 @@ elif page == "📅  Stabilite":
             if _sig_v > 0:
                 _stab_rows.append((int(_day_v), _sig_v, _sd_v))
 
-    if st.button("▶ Stabilite Hesapla", type="primary", use_container_width=True, key="btn_stab_run"):
+    if st.button("▶ Run Stability", type="primary", use_container_width=True, key="btn_stab_run"):
         if len(_stab_rows) < 2:
-            st.warning("En az 2 ölçüm günü gerekli.")
+            st.warning("At least 2 measurement days required.")
         else:
             _stab_rows_sorted = sorted(_stab_rows, key=lambda x: x[0])
             _ref_sig = _stab_rows_sorted[0][1]
@@ -2535,12 +2532,12 @@ elif page == "📅  Stabilite":
                 _rec = _sig / _ref_sig * 100 if _ref_sig != 0 else float("nan")
                 _rsd = (_sd / _sig * 100) if _sig != 0 else 0.0
                 _stab_res.append({
-                    "Gün":              _day,
-                    "Sinyal (µA)":      round(_sig, 4),
-                    "SD (µA)":          round(_sd, 4),
-                    "%RSD":             round(_rsd, 2),
-                    "% Recovery":       round(_rec, 2),
-                    "Durum":            "✅" if _rec >= _stab_thresh else "⚠️",
+                    "Day":          _day,
+                    "Signal (µA)":  round(_sig, 4),
+                    "SD (µA)":      round(_sd, 4),
+                    "%RSD":         round(_rsd, 2),
+                    "% Recovery":   round(_rec, 2),
+                    "Status":       "✅" if _rec >= _stab_thresh else "⚠️",
                 })
             st.session_state["stab_results"]  = _stab_res
             st.session_state["stab_thresh"]   = _stab_thresh
@@ -2551,25 +2548,25 @@ elif page == "📅  Stabilite":
         _thresh2 = st.session_state.get("stab_thresh", 90.0)
         st.dataframe(pd.DataFrame(_sr2), hide_index=True, use_container_width=True)
 
-        _last_day_pass = _sr2[-1]["Durum"] == "✅"
+        _last_day_pass = _sr2[-1]["Status"] == "✅"
         _last_rec = _sr2[-1]["% Recovery"]
         if _last_day_pass:
-            st.success(f"✅ Son günde % recovery: {_last_rec:.1f}% — Kriter karşılanıyor (≥{_thresh2:.0f}%)")
+            st.success(f"✅ Day {_sr2[-1]['Day']}: % recovery = {_last_rec:.1f}% — criterion met (≥{_thresh2:.0f}%)")
         else:
-            st.warning(f"⚠️ Son günde % recovery: {_last_rec:.1f}% — Kriter karşılanmıyor (<{_thresh2:.0f}%)")
+            st.warning(f"⚠️ Day {_sr2[-1]['Day']}: % recovery = {_last_rec:.1f}% — criterion not met (<{_thresh2:.0f}%)")
 
         import matplotlib.pyplot as plt
         _fig_stab, _ax_stab = plt.subplots(figsize=(8, 4))
-        _days_arr = [r["Gün"] for r in _sr2]
+        _days_arr = [r["Day"] for r in _sr2]
         _rec_arr  = [r["% Recovery"] for r in _sr2]
         _ax_stab.plot(_days_arr, _rec_arr, "o-", color="#3498db", linewidth=2, markersize=6, label="% Recovery")
-        _ax_stab.axhline(y=_thresh2, color="#e74c3c", linestyle="--", linewidth=1.2, label=f"Kabul Eşiği ({_thresh2:.0f}%)")
+        _ax_stab.axhline(y=_thresh2, color="#e74c3c", linestyle="--", linewidth=1.2, label=f"Threshold ({_thresh2:.0f}%)")
         _ax_stab.fill_between(_days_arr, _thresh2, _rec_arr,
                                where=[r >= _thresh2 for r in _rec_arr],
                                alpha=0.15, color="#2ecc71")
-        _ax_stab.set_xlabel("Gün", fontsize=10)
+        _ax_stab.set_xlabel("Day", fontsize=10)
         _ax_stab.set_ylabel("% Recovery", fontsize=10)
-        _ax_stab.set_title(f"{st.session_state.get('stab_analyte','Analit')} — Sensör Stabilitesi", fontsize=11, fontweight="bold")
+        _ax_stab.set_title(f"{st.session_state.get('stab_analyte','Analyte')} — Sensor Stability", fontsize=11, fontweight="bold")
         _ax_stab.set_ylim(max(0, min(_rec_arr) - 10), 105)
         _ax_stab.legend(fontsize=9)
         plt.tight_layout()
@@ -2577,26 +2574,26 @@ elif page == "📅  Stabilite":
         plt.close(_fig_stab)
 
         _stab_csv_dl = pd.DataFrame(_sr2).to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ CSV İndir", _stab_csv_dl,
+        st.download_button("⬇️ Download CSV", _stab_csv_dl,
                            file_name=f"{st.session_state.get('stab_analyte','sensor')}_stability.csv",
                            mime="text/csv", use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════
 # 🔬  YÜZEY KARAKTERİZASYONU
 # ═══════════════════════════════════════════════════════════
-elif page == "🔬  Yüzey Karakterizasyonu":
-    st.title("🔬 Yüzey Karakterizasyonu")
+elif page == "🔬  Surface Characterization":
+    st.title("🔬 Surface Characterization")
     st.caption(
-        "SEM görüntüleri, EIS Nyquist karşılaştırması ve CV (bare vs modifiye) "
-        "analizi — yüzey modifikasyonunu kanıtlayan üç temel kanıt."
+        "SEM images, EIS Nyquist comparison, and CV (bare vs modified) analysis — "
+        "three key lines of evidence proving surface modification."
     )
 
-    _surf_tabs = st.tabs(["🖼️ SEM Görüntüleri", "⚡ EIS Nyquist", "🌊 CV Karşılaştırma"])
+    _surf_tabs = st.tabs(["🖼️ SEM Images", "⚡ EIS Nyquist", "🌊 CV Comparison"])
 
     # ── SEM ──────────────────────────────────────────────────
     with _surf_tabs[0]:
-        st.markdown("#### SEM Görüntüleri")
-        st.caption("Bare elektrot ve modifiye elektrot SEM görüntülerini yükleyin (PNG/JPG).")
+        st.markdown("#### SEM Images")
+        st.caption("Upload SEM images of the bare and modified electrode (PNG/JPG).")
         _sem_col1, _sem_col2 = st.columns(2)
         with _sem_col1:
             st.markdown("**Bare GCE**")
@@ -2604,20 +2601,20 @@ elif page == "🔬  Yüzey Karakterizasyonu":
             if _sem_bare:
                 st.image(_sem_bare, caption="Bare GCE", use_container_width=True)
         with _sem_col2:
-            st.markdown("**Modifiye Elektrot**")
-            _sem_mod = st.file_uploader("Modifiye SEM", type=["png","jpg","jpeg","tif","tiff"], key="sem_mod_up")
+            st.markdown("**Modified Electrode**")
+            _sem_mod = st.file_uploader("Modified SEM", type=["png","jpg","jpeg","tif","tiff"], key="sem_mod_up")
             if _sem_mod:
-                st.image(_sem_mod, caption="Modifiye Elektrot", use_container_width=True)
-        _sem_note = st.text_area("SEM yorumu (opsiyonel)", height=80, key="sem_note",
-                                  placeholder="Örn: Modifiye elektrot yüzeyinde MWCNTs'e ait tüp yapıları ve Nafion filmi görülmektedir.")
+                st.image(_sem_mod, caption="Modified Electrode", use_container_width=True)
+        _sem_note = st.text_area("SEM observation (optional)", height=80, key="sem_note",
+                                  placeholder="e.g. The modified electrode surface shows MWCNT tube structures and a Nafion film layer.")
         if _sem_note:
-            st.info(f"📝 Not: {_sem_note}")
+            st.info(f"📝 Note: {_sem_note}")
 
     # ── EIS Nyquist ──────────────────────────────────────────
     with _surf_tabs[1]:
-        st.markdown("#### EIS Nyquist Karşılaştırması")
-        st.caption("Her elektrot için Z_real (Ω) ve -Z_imag (Ω) kolonlu CSV yükleyin, "
-                   "veya aynı EIS sayfasında analiz edin.")
+        st.markdown("#### EIS Nyquist Comparison")
+        st.caption("Upload a CSV with Z_real (Ω) and -Z_imag (Ω) columns for each electrode, "
+                   "or use the EIS module for full analysis.")
 
         _eis_col1, _eis_col2 = st.columns(2)
         _eis_data = {}
@@ -2631,28 +2628,27 @@ elif page == "🔬  Yüzey Karakterizasyonu":
                     _zr_i  = next((i for i,c in enumerate(_ecols) if "zre" in c or "z_real" in c or "re" in c), 0)
                     _zi_i  = next((i for i,c in enumerate(_ecols) if "zim" in c or "z_imag" in c or "-z" in c or "im" in c), 1)
                     _eis_data["Bare GCE"] = (_eb_df.iloc[:, _zr_i].values, _eb_df.iloc[:, _zi_i].values)
-                    st.success(f"✓ {len(_eb_df)} frekans noktası")
+                    st.success(f"✓ {len(_eb_df)} frequency points")
                 except Exception as _e:
                     st.error(str(_e))
         with _eis_col2:
-            st.markdown("**Modifiye Elektrot**")
-            _eis_mod_up = st.file_uploader("Modifiye EIS CSV", type="csv", key="eis_mod_nyquist")
+            st.markdown("**Modified Electrode**")
+            _eis_mod_up = st.file_uploader("Modified EIS CSV", type="csv", key="eis_mod_nyquist")
             if _eis_mod_up:
                 try:
                     _em_df = pd.read_csv(_eis_mod_up)
                     _ecols2 = [c.lower() for c in _em_df.columns]
                     _zr_i2  = next((i for i,c in enumerate(_ecols2) if "zre" in c or "z_real" in c or "re" in c), 0)
                     _zi_i2  = next((i for i,c in enumerate(_ecols2) if "zim" in c or "z_imag" in c or "-z" in c or "im" in c), 1)
-                    _eis_data["Modifiye"] = (_em_df.iloc[:, _zr_i2].values, _em_df.iloc[:, _zi_i2].values)
-                    st.success(f"✓ {len(_em_df)} frekans noktası")
+                    _eis_data["Modified"] = (_em_df.iloc[:, _zr_i2].values, _em_df.iloc[:, _zi_i2].values)
+                    st.success(f"✓ {len(_em_df)} frequency points")
                 except Exception as _e:
                     st.error(str(_e))
 
-        # Manuel Rct giriş (opsiyonel)
-        st.markdown("**Rct değerleri (Equivalent Circuit Fit sonuçları)**")
+        st.markdown("**Rct values (from equivalent circuit fit)**")
         _rc1, _rc2 = st.columns(2)
         _rct_bare = _rc1.number_input("Rct – Bare GCE (Ω)", value=0.0, min_value=0.0, format="%.1f", key="rct_bare")
-        _rct_mod  = _rc2.number_input("Rct – Modifiye (Ω)",  value=0.0, min_value=0.0, format="%.1f", key="rct_mod")
+        _rct_mod  = _rc2.number_input("Rct – Modified (Ω)",  value=0.0, min_value=0.0, format="%.1f", key="rct_mod")
 
         if _eis_data:
             import matplotlib.pyplot as plt
@@ -2662,7 +2658,7 @@ elif page == "🔬  Yüzey Karakterizasyonu":
                 _ax_eis2.plot(_zr, _zi, "o-", color=_col, markersize=4, linewidth=1.5, label=_lbl)
             _ax_eis2.set_xlabel("Z$_{real}$ (Ω)", fontsize=11)
             _ax_eis2.set_ylabel("-Z$_{imag}$ (Ω)", fontsize=11)
-            _ax_eis2.set_title("EIS Nyquist — Yüzey Karşılaştırması", fontsize=12, fontweight="bold")
+            _ax_eis2.set_title("EIS Nyquist — Surface Comparison", fontsize=12, fontweight="bold")
             _ax_eis2.set_aspect("equal", adjustable="box")
             _ax_eis2.legend(fontsize=9)
             plt.tight_layout()
@@ -2673,18 +2669,18 @@ elif page == "🔬  Yüzey Karakterizasyonu":
             _rct_ratio = _rct_bare / _rct_mod
             _mc1b, _mc2b, _mc3b = st.columns(3)
             _mc1b.metric("Rct Bare (Ω)", f"{_rct_bare:.1f}")
-            _mc2b.metric("Rct Modifiye (Ω)", f"{_rct_mod:.1f}")
-            _mc3b.metric("Rct Oranı (Bare/Mod)", f"{_rct_ratio:.2f}×")
+            _mc2b.metric("Rct Modified (Ω)", f"{_rct_mod:.1f}")
+            _mc3b.metric("Rct Ratio (Bare/Mod)", f"{_rct_ratio:.2f}×")
             if _rct_mod < _rct_bare:
-                st.success("✅ Modifiye elektrot daha düşük Rct → iyileşmiş elektron transfer kinetiği")
+                st.success("✅ Modified electrode shows lower Rct → improved electron transfer kinetics")
             else:
-                st.info("ℹ️ Modifiye elektrot daha yüksek Rct (bariyer layer beklenen durumlarda normal)")
+                st.info("ℹ️ Modified electrode shows higher Rct (expected for barrier-layer configurations)")
 
-    # ── CV Karşılaştırma ─────────────────────────────────────
+    # ── CV Comparison ─────────────────────────────────────────
     with _surf_tabs[2]:
-        st.markdown("#### CV Karşılaştırma — Bare vs Modifiye")
-        st.caption("Her elektrot için potansiyel (V) ve akım (µA) kolonlu CSV yükleyin "
-                   "veya anot/katot pik akımlarını manuel girin.")
+        st.markdown("#### CV Comparison — Bare vs Modified")
+        st.caption("Upload a CSV with potential (V) and current (µA) columns for each electrode, "
+                   "or enter anodic/cathodic peak currents manually.")
 
         _cv_col1, _cv_col2 = st.columns(2)
         _cv_data = {}
@@ -2698,19 +2694,19 @@ elif page == "🔬  Yüzey Karakterizasyonu":
                     _vci  = next((i for i,c in enumerate(_cvc1) if "pot" in c or "v" in c or "e" in c), 0)
                     _ici  = next((i for i,c in enumerate(_cvc1) if "curr" in c or "i" in c or "µa" in c or "ua" in c or "a" in c), 1)
                     _cv_data["Bare GCE"] = (_cvb_df.iloc[:,_vci].values, _cvb_df.iloc[:,_ici].values)
-                    st.success(f"✓ {len(_cvb_df)} nokta")
+                    st.success(f"✓ {len(_cvb_df)} points")
                 except Exception as _e: st.error(str(_e))
         with _cv_col2:
-            st.markdown("**Modifiye Elektrot**")
-            _cv_mod_up = st.file_uploader("Modifiye CV CSV", type="csv", key="cv_mod_surf")
+            st.markdown("**Modified Electrode**")
+            _cv_mod_up = st.file_uploader("Modified CV CSV", type="csv", key="cv_mod_surf")
             if _cv_mod_up:
                 try:
                     _cvm_df = pd.read_csv(_cv_mod_up)
                     _cvc2 = [c.lower() for c in _cvm_df.columns]
                     _vci2  = next((i for i,c in enumerate(_cvc2) if "pot" in c or "v" in c or "e" in c), 0)
                     _ici2  = next((i for i,c in enumerate(_cvc2) if "curr" in c or "i" in c or "µa" in c or "ua" in c or "a" in c), 1)
-                    _cv_data["Modifiye"] = (_cvm_df.iloc[:,_vci2].values, _cvm_df.iloc[:,_ici2].values)
-                    st.success(f"✓ {len(_cvm_df)} nokta")
+                    _cv_data["Modified"] = (_cvm_df.iloc[:,_vci2].values, _cvm_df.iloc[:,_ici2].values)
+                    st.success(f"✓ {len(_cvm_df)} points")
                 except Exception as _e: st.error(str(_e))
 
         if _cv_data:
@@ -2719,32 +2715,32 @@ elif page == "🔬  Yüzey Karakterizasyonu":
             _cv_colors2 = ["#2c3e50", "#e74c3c"]
             for (_lbl, (_vv, _ii)), _col in zip(_cv_data.items(), _cv_colors2):
                 _ax_cv2.plot(_vv, _ii, color=_col, linewidth=2, label=_lbl)
-            _ax_cv2.set_xlabel("Potansiyel (V)", fontsize=11)
-            _ax_cv2.set_ylabel("Akım (µA)", fontsize=11)
-            _ax_cv2.set_title("CV — Bare GCE vs Modifiye Elektrot", fontsize=12, fontweight="bold")
+            _ax_cv2.set_xlabel("Potential (V)", fontsize=11)
+            _ax_cv2.set_ylabel("Current (µA)", fontsize=11)
+            _ax_cv2.set_title("CV — Bare GCE vs Modified Electrode", fontsize=12, fontweight="bold")
             _ax_cv2.axhline(0, color="gray", linewidth=0.6, linestyle="--")
             _ax_cv2.legend(fontsize=9)
             plt.tight_layout()
             st.pyplot(_fig_cv2)
             plt.close(_fig_cv2)
 
-        st.markdown("**Pik akımı karşılaştırması (manuel):**")
+        st.markdown("**Peak current comparison (manual entry):**")
         _pcc1, _pcc2 = st.columns(2)
         _pcc3, _pcc4 = st.columns(2)
         _ipa_bare = _pcc1.number_input("Ipa – Bare (µA)", value=0.0, format="%.3f", key="surf_ipa_bare")
-        _ipa_mod  = _pcc2.number_input("Ipa – Modifiye (µA)", value=0.0, format="%.3f", key="surf_ipa_mod")
+        _ipa_mod  = _pcc2.number_input("Ipa – Modified (µA)", value=0.0, format="%.3f", key="surf_ipa_mod")
         _ipc_bare = _pcc3.number_input("Ipc – Bare (µA)", value=0.0, format="%.3f", key="surf_ipc_bare")
-        _ipc_mod  = _pcc4.number_input("Ipc – Modifiye (µA)", value=0.0, format="%.3f", key="surf_ipc_mod")
+        _ipc_mod  = _pcc4.number_input("Ipc – Modified (µA)", value=0.0, format="%.3f", key="surf_ipc_mod")
         if _ipa_bare > 0 and _ipa_mod > 0:
             _enhancement = (_ipa_mod - _ipa_bare) / _ipa_bare * 100
             _m1s, _m2s, _m3s = st.columns(3)
             _m1s.metric("Ipa Bare (µA)", f"{_ipa_bare:.3f}")
-            _m2s.metric("Ipa Modifiye (µA)", f"{_ipa_mod:.3f}")
-            _m3s.metric("Sinyal Artışı", f"{_enhancement:+.1f}%",
+            _m2s.metric("Ipa Modified (µA)", f"{_ipa_mod:.3f}")
+            _m3s.metric("Signal Enhancement", f"{_enhancement:+.1f}%",
                         delta=f"{_enhancement:+.1f}%",
                         delta_color="normal" if _enhancement > 0 else "inverse")
             if _enhancement > 0:
-                st.success(f"✅ Modifiye elektrot {_enhancement:.1f}% daha yüksek pik akımı → gelişmiş elektrokatalitik aktivite")
+                st.success(f"✅ Modified electrode shows {_enhancement:.1f}% higher peak current → enhanced electrocatalytic activity")
 
 # ═══════════════════════════════════════════════════════════
 # 📄  REPORT
