@@ -411,6 +411,60 @@ with st.sidebar:
         else:
             st.caption("aistudio.google.com → Get API key")
 
+    # ── Plot Style ───────────────────────────────────────────
+    with st.expander("🎨 Plot Style"):
+        _PALETTES = {
+            "Navy Classic":  ['#1f4e79','#c55a11','#375623','#7030a0','#843c0c',
+                              '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd'],
+            "Matplotlib":    ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
+                              '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'],
+            "Vibrant":       ['#E63946','#457B9D','#2D6A4F','#F4A261','#7B2D8B',
+                              '#E9C46A','#264653','#E76F51','#06D6A0','#118AB2'],
+            "Earthy":        ['#8B4513','#228B22','#4169E1','#DC143C','#FF8C00',
+                              '#6A0DAD','#20B2AA','#B8860B','#708090','#C71585'],
+            "Grayscale":     ['#111111','#333333','#555555','#777777','#999999',
+                              '#444444','#666666','#888888','#AAAAAA','#BBBBBB'],
+        }
+        if "plot_palette" not in st.session_state:
+            st.session_state.plot_palette = "Navy Classic"
+        _pal = st.selectbox("Color palette", list(_PALETTES.keys()),
+                            index=list(_PALETTES.keys()).index(st.session_state.plot_palette),
+                            key="plot_palette_sel")
+        st.session_state.plot_palette = _pal
+
+        # Renk önizlemesi
+        _prev_colors = _PALETTES[_pal][:5]
+        _swatch = "".join(
+            f'<span style="display:inline-block;width:22px;height:14px;'
+            f'background:{c};border-radius:3px;margin:1px;"></span>'
+            for c in _prev_colors
+        )
+        st.markdown(_swatch, unsafe_allow_html=True)
+
+        _lw_def = st.session_state.get("plot_linewidth", 2.0)
+        _lw = st.slider("Line width", 0.5, 5.0, _lw_def, 0.5, key="plot_lw_sl")
+        st.session_state.plot_linewidth = _lw
+
+        _LS_OPTIONS = ["─── Solid", "--- Dashed", "··· Dotted", "-·- Dash-dot"]
+        _LS_MAP     = {"─── Solid": "-", "--- Dashed": "--", "··· Dotted": ":", "-·- Dash-dot": "-."}
+        _ls_def = st.session_state.get("plot_linestyle_label", "--- Dashed")
+        _ls_lbl = st.radio("Fit line style", _LS_OPTIONS,
+                           index=_LS_OPTIONS.index(_ls_def),
+                           key="plot_ls_radio", horizontal=True)
+        st.session_state.plot_linestyle_label = _ls_lbl
+
+        _ms_def = int(st.session_state.get("plot_markersize", 60))
+        _ms = st.slider("Marker size", 10, 150, _ms_def, 10, key="plot_ms_sl")
+        st.session_state.plot_markersize = _ms
+
+        # Build the dict every time sidebar renders
+        st.session_state.plot_style = {
+            "colors":        _PALETTES[_pal],
+            "linewidth":     _lw,
+            "fit_linestyle": _LS_MAP[_ls_lbl],
+            "marker_size":   _ms,
+        }
+
     st.divider()
 
     # ── Navigation ───────────────────────────────────────────
@@ -751,7 +805,8 @@ elif page == "📈  CV — Scan Rate Study":
         with st.spinner("Analysing…"):
             out = os.path.join(tmpdir,"cv_out"); os.makedirs(out,exist_ok=True)
             try:
-                res = run_cv_analysis(disk_map,conc_mM,diff_coeff,int(n_el),out)
+                res = run_cv_analysis(disk_map,conc_mM,diff_coeff,int(n_el),out,
+                                      plot_style=st.session_state.get("plot_style"))
                 st.success("✅ Done — results saved to project")
                 ecsa = res.get('ecsa',{}); mech = res.get('mechanism',{})
                 k0   = res.get('k0',{})
@@ -839,7 +894,8 @@ elif page == "🔵  EIS — Impedance":
         with st.spinner("Fitting…"):
             out=os.path.join(tmpdir,"eis_out"); os.makedirs(out,exist_ok=True)
             try:
-                _eis_result=run_eis_analysis(file_dict,out,sign_zimag=sign_z)
+                _eis_result=run_eis_analysis(file_dict,out,sign_zimag=sign_z,
+                                             plot_style=st.session_state.get("plot_style"))
                 param_df = _eis_result[0] if isinstance(_eis_result, tuple) else _eis_result
                 fit_results = _eis_result[1] if isinstance(_eis_result, tuple) and len(_eis_result)>1 else None
                 st.success("✅ Done — results saved to project")
@@ -910,7 +966,8 @@ elif page == "🧪  pH — Working pH":
         with st.spinner("Analysing…"):
             out=os.path.join(tmpdir,"ph_out"); os.makedirs(out,exist_ok=True)
             try:
-                res=run_ph_analysis(ph_path,int(ph_n_el),pk_type,out)
+                res=run_ph_analysis(ph_path,int(ph_n_el),pk_type,out,
+                                    plot_style=st.session_state.get("plot_style"))
                 st.success("✅ Done — results saved to project")
                 theory=-59.2*res.get('m_proton',ph_n_el)/int(ph_n_el)
                 metrics={
@@ -990,7 +1047,8 @@ elif page == "📊  Calibration & LOD/LOQ":
                 res=run_analytical_performance(
                     calibration_source=cal_data,analyte_name=analyte,
                     electrode_area_cm2=float(area_cal) if area_cal>0 else None,
-                    unit=conc_unit,output_dir=out)
+                    unit=conc_unit,output_dir=out,
+                    plot_style=st.session_state.get("plot_style"))
                 st.success("✅ Done — results saved to project")
                 cr=res.get('calibration',res)
                 lr=cr.get('linear_range',['?','?'])
@@ -1066,7 +1124,8 @@ elif page == "➕  Standard Addition":
             out=os.path.join(tmpdir,"sa_out"); os.makedirs(out)
             try:
                 res=standard_addition(additions_uM=additions,ip_uA=ip_vals,
-                                       analyte_name=sa_analyte,output_dir=out)
+                                       analyte_name=sa_analyte,output_dir=out,
+                                       plot_style=st.session_state.get("plot_style"))
                 st.success("✅ Done — results saved to project")
                 metrics={
                     f"C_sample ({sa_cu})": f"{res.get('C_sample_uM',0):.4f}",
