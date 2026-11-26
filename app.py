@@ -1253,10 +1253,301 @@ elif page == "📊  Calibration & LOD/LOQ":
                 except Exception as _e:
                     st.error(f"Şablon okunamadı: {_e}")
 
-    # Kalibrasyon verisi: bulk yükleme öncelikli
-    if "bulk_cal" in st.session_state and st.session_state["bulk_cal"]:
-        st.info("📦 Bulk şablon'dan kalibrasyon verisi kullanılıyor. "
-                "Manuel giriş yapmak isterseniz aşağıya veri ekleyebilirsiniz.")
+    # ── Toplu Validasyon: Tek Tıkla Çalıştır ──────────────────────────────────
+    _has_bulk = ("bulk_cal" in st.session_state and st.session_state.get("bulk_cal"))
+    if _has_bulk:
+        st.success("📦 Şablon yüklendi — tüm bölümler hazır. Aşağıdan tek seferde çalıştırın.")
+        _bulk_col1, _bulk_col2, _bulk_col3 = st.columns([2, 1, 1])
+        with _bulk_col1:
+            _bulk_analyte  = st.text_input("Analite adı (rapor için)",
+                                            value=st.session_state.get("bulk_analyte","Analyte"),
+                                            key="bulk_analyte_inp")
+            st.session_state["bulk_analyte"] = _bulk_analyte
+        with _bulk_col2:
+            _BUNITS = ["μM","mM","nM","mg/mL","μg/mL","ng/mL","mg/L","μg/L","ng/L","mol/L","mmol/L"]
+            _bulk_unit = st.selectbox("Birim", _BUNITS, key="bulk_unit_sel",
+                                       index=_BUNITS.index(st.session_state.get("cal_unit","μM")))
+            st.session_state["cal_unit"] = _bulk_unit
+        with _bulk_col3:
+            _bulk_area = st.number_input("Elektrot alanı (cm²)",
+                                          value=0.0, min_value=0.0, format="%.4f",
+                                          key="bulk_area_inp")
+
+        if st.button("▶ Tüm Validasyonu Çalıştır", type="primary",
+                     use_container_width=True, key="btn_bulk_run"):
+            import tempfile, os as _os
+            _banalyte = st.session_state.get("bulk_analyte", "Analyte")
+            _bunit    = st.session_state.get("cal_unit", "μM")
+            _barea    = _bulk_area if _bulk_area > 0 else None
+            _bout     = tempfile.mkdtemp(prefix="bulk_validation_")
+            _bps      = st.session_state.get("plot_style", {}) or {}
+
+            with st.spinner("⚙️ Kalibrasyon + LOD/LOQ hesaplanıyor…"):
+                try:
+                    _bulk_res = run_analytical_performance(
+                        calibration_source=st.session_state["bulk_cal"],
+                        analyte_name=_banalyte,
+                        electrode_area_cm2=_barea,
+                        unit=_bunit,
+                        output_dir=_bout,
+                        plot_style=_bps,
+                    )
+                    st.session_state["bulk_full_res"] = _bulk_res
+                    st.session_state["bulk_out_dir"]  = _bout
+                    _cr = _bulk_res.get("calibration", _bulk_res)
+                    _save_analysis("cal", {
+                        "LOD":    f"{_cr.get('LOD',0):.4g} {_bunit}",
+                        "LOQ":    f"{_cr.get('LOQ',0):.4g} {_bunit}",
+                        "r":      f"{_cr.get('r',_cr.get('R2',0)):.5f}",
+                        "Slope":  f"{_cr.get('slope',0):.4f} µA/{_bunit}",
+                        "Intercept": f"{_cr.get('intercept',0):.4f} µA",
+                    }, _bout)
+                    st.success("✅ Kalibrasyon tamamlandı.")
+                except Exception as _e:
+                    st.error(f"Kalibrasyon hatası: {_e}")
+                    import traceback; st.code(traceback.format_exc())
+
+            # ICH Q2 Precision ───────────────────────────────────────────────
+            if "bulk_rep" in st.session_state and st.session_state["bulk_rep"]:
+                with st.spinner("⚙️ ICH Q2(R2) Kesinlik hesaplanıyor…"):
+                    try:
+                        _intra  = st.session_state["bulk_rep"]
+                        _inter_flat = {}
+                        if "bulk_ipr" in st.session_state:
+                            for _gn, _sevs in st.session_state["bulk_ipr"].items():
+                                for _sv, _vs in _sevs.items():
+                                    _inter_flat[f"{_gn} – {_sv}"] = _vs
+                        _prec_res = ich_q2_precision_validation(
+                            intraday_data=_intra,
+                            interday_data=_inter_flat or None,
+                            analyte_name=_banalyte,
+                            unit=_bunit,
+                            output_dir=_bout,
+                            plot_style=_bps,
+                        )
+                        st.session_state["bulk_prec_res"] = _prec_res
+                        st.success("✅ Kesinlik validasyonu tamamlandı.")
+                    except Exception as _e:
+                        st.error(f"Kesinlik hatası: {_e}")
+
+            # Accuracy ────────────────────────────────────────────────────────
+            if "bulk_acc" in st.session_state and "bulk_full_res" in st.session_state:
+                with st.spinner("⚙️ Accuracy / Geri Kazanım hesaplanıyor…"):
+                    try:
+                        _fcr = st.session_state["bulk_full_res"].get(
+                            "calibration", st.session_state["bulk_full_res"])
+                        _sl2  = _fcr.get("slope", 1)
+                        _ic2  = _fcr.get("intercept", 0)
+                        _acc_rows_b = []
+                        for _qlbl, (_qnom, _qvals) in st.session_state["bulk_acc"].items():
+                            if not _qvals:
+                                continue
+                            _ipm  = float(np.mean(_qvals))
+                            _ipsd = float(np.std(_qvals, ddof=1)) if len(_qvals) > 1 else 0.0
+                            _iprsd= (_ipsd / _ipm * 100) if _ipm != 0 else 0.0
+                            _cc   = (_ipm - _ic2) / _sl2 if _sl2 != 0 else float('nan')
+                            _rp   = (_cc / _qnom * 100) if _qnom != 0 else float('nan')
+                            _acc_rows_b.append({
+                                "QC Seviyesi": _qlbl,
+                                f"Nominal C ({_bunit})": _qnom,
+                                "n": len(_qvals),
+                                "ip ort. (µA)": round(_ipm, 4),
+                                "ip SD (µA)": round(_ipsd, 4),
+                                "ip %RSD": round(_iprsd, 2),
+                                f"Hesaplanan C ({_bunit})": round(_cc, 4),
+                                "Geri Kazanım (%)": round(_rp, 2),
+                                "ICH Kabul (98–102%)": "✅" if 98 <= _rp <= 102 else "⚠️",
+                            })
+                        st.session_state["bulk_acc_rows"] = _acc_rows_b
+                        st.success("✅ Accuracy hesaplandı.")
+                    except Exception as _e:
+                        st.error(f"Accuracy hatası: {_e}")
+
+            # Standard Addition ───────────────────────────────────────────────
+            if "bulk_sa" in st.session_state and st.session_state["bulk_sa"]:
+                with st.spinner("⚙️ Standart Ekleme hesaplanıyor…"):
+                    try:
+                        _sa_adds = [x[0] for x in st.session_state["bulk_sa"]]
+                        _sa_ips  = [x[1] for x in st.session_state["bulk_sa"]]
+                        _sa_res  = standard_addition(
+                            additions_uM=_sa_adds, ip_uA=_sa_ips,
+                            analyte_name=_banalyte, unit=_bunit,
+                            output_dir=_bout, plot_style=_bps,
+                        )
+                        st.session_state["bulk_sa_res"] = _sa_res
+                        st.success("✅ Standart ekleme hesaplandı.")
+                    except Exception as _e:
+                        st.error(f"Standart ekleme hatası: {_e}")
+
+            st.session_state["bulk_ran"] = True
+            st.rerun()
+
+        # ── Sonuçlar & Rapor (run sonrası görünür) ────────────────────────────
+        if st.session_state.get("bulk_ran"):
+            st.divider()
+            st.markdown("## 📊 Validasyon Sonuçları")
+
+            # Kalibrasyon özeti
+            if "bulk_full_res" in st.session_state:
+                _fcr2 = st.session_state["bulk_full_res"].get(
+                    "calibration", st.session_state["bulk_full_res"])
+                _lr   = _fcr2.get("linear_range", ["?","?"])
+                st.markdown("### 📐 Kalibrasyon & LOD/LOQ")
+                _mc1,_mc2,_mc3,_mc4,_mc5 = st.columns(5)
+                _mc1.metric("Slope",   f"{_fcr2.get('slope',0):.4f} µA/{st.session_state.get('cal_unit','µM')}")
+                _mc2.metric("r²",      f"{_fcr2.get('R2',_fcr2.get('r',0))**2:.5f}" if _fcr2.get('r') else f"{_fcr2.get('R2',0):.5f}")
+                _mc3.metric("LOD",     f"{_fcr2.get('LOD',0):.4g} {st.session_state.get('cal_unit','µM')}")
+                _mc4.metric("LOQ",     f"{_fcr2.get('LOQ',0):.4g} {st.session_state.get('cal_unit','µM')}")
+                _mc5.metric("Lin. range", f"{_lr[0]:.3g}–{_lr[1]:.3g}")
+                _bout2 = st.session_state.get("bulk_out_dir","")
+                if _bout2:
+                    _show_imgs(_bout2)
+
+            # ICH Q2 Kesinlik özeti
+            if "bulk_prec_res" in st.session_state:
+                st.markdown("### 🔬 ICH Q2(R2) Kesinlik")
+                _pr = st.session_state["bulk_prec_res"]
+                _intra_r = _pr.get("intraday_results", {})
+                _inter_r = _pr.get("interday_results", {})
+                if _intra_r:
+                    _intra_df = pd.DataFrame([
+                        {"Seviye": k, "n": v["n"],
+                         "Ortalama (µA)": round(v["mean"],4),
+                         "%RSD": round(v["rsd"],2),
+                         "Tekrarlılık (≤2%)": "✅" if v["pass"] else "⚠️"}
+                        for k,v in _intra_r.items()
+                    ])
+                    st.caption("**Tekrar Edilebilirlik (Gün İçi)**")
+                    st.dataframe(_intra_df, hide_index=True, use_container_width=True)
+                if _inter_r:
+                    _inter_df = pd.DataFrame([
+                        {"Grup": k, "n": v["n"],
+                         "Ortalama (µA)": round(v["mean"],4),
+                         "%RSD": round(v["rsd"],2),
+                         "Ara Kesinlik (≤5%)": "✅" if v["pass"] else "⚠️"}
+                        for k,v in _inter_r.items()
+                    ])
+                    st.caption("**Ara Kesinlik (Günler Arası)**")
+                    st.dataframe(_inter_df, hide_index=True, use_container_width=True)
+
+            # Accuracy özeti
+            if "bulk_acc_rows" in st.session_state:
+                st.markdown("### 🎯 Accuracy / Geri Kazanım")
+                _acc_df2 = pd.DataFrame(st.session_state["bulk_acc_rows"])
+                st.dataframe(_acc_df2, hide_index=True, use_container_width=True)
+                _all_ok = all(98 <= r["Geri Kazanım (%)"] <= 102
+                              for r in st.session_state["bulk_acc_rows"]
+                              if not (isinstance(r["Geri Kazanım (%)"], float)
+                                      and np.isnan(r["Geri Kazanım (%)"])))
+                if _all_ok:
+                    st.success("✅ Tüm QC seviyeleri ICH Q2(R2) accuracy kriterini karşılıyor (98–102%)")
+                else:
+                    st.warning("⚠️ Bazı QC seviyeleri 98–102% aralığının dışında.")
+
+            # Standart Ekleme özeti
+            if "bulk_sa_res" in st.session_state:
+                _sar = st.session_state["bulk_sa_res"]
+                st.markdown("### ➕ Standart Ekleme")
+                _sc1,_sc2,_sc3 = st.columns(3)
+                _sc1.metric("Slope", f"{_sar.get('slope',0):.4f}")
+                _sc2.metric("R²",    f"{_sar.get('R2',0):.5f}")
+                _sc3.metric("Numune konsantrasyonu",
+                            f"{_sar.get('sample_concentration',0):.4g} "
+                            f"{st.session_state.get('cal_unit','µM')}")
+
+            # ── Rapor Üret ────────────────────────────────────────────────────
+            st.divider()
+            st.markdown("## 📄 Validasyon Raporu")
+            st.caption("ICH Q2(R2) uyumlu rapor — dergi yükleme formatında (PDF + Word)")
+
+            _rep_col1, _rep_col2 = st.columns(2)
+            with _rep_col1:
+                _rep_journal = st.selectbox(
+                    "Hedef dergi stili",
+                    ["Genel / ICH Q2(R2)", "Analytical Chemistry (ACS)",
+                     "Biosensors & Bioelectronics (Elsevier)",
+                     "ACS Sensors", "Talanta (Elsevier)",
+                     "Journal of Electroanalytical Chemistry"],
+                    key="bulk_journal_sel"
+                )
+            with _rep_col2:
+                _rep_lang = st.selectbox("Rapor dili", ["English", "Türkçe"],
+                                          key="bulk_rep_lang")
+
+            if st.button("📄 PDF + Word Raporu Oluştur", type="secondary",
+                         use_container_width=True, key="btn_bulk_report"):
+                with st.spinner("Rapor hazırlanıyor…"):
+                    try:
+                        # Mevcut projeye tüm sonuçları kaydet
+                        _proj = _cur()
+                        _rout = st.session_state.get("bulk_out_dir",
+                                tempfile.mkdtemp(prefix="bulk_rep_"))
+
+                        # Precision ve accuracy metriklerini de kaydet
+                        if "bulk_prec_res" in st.session_state:
+                            _pr2 = st.session_state["bulk_prec_res"]
+                            _save_analysis("ich_precision", {
+                                "intraday": _pr2.get("intraday_results",{}),
+                                "interday": _pr2.get("interday_results",{}),
+                                "pass_fail": _pr2.get("pass_fail",{}),
+                            }, _rout)
+                        if "bulk_acc_rows" in st.session_state:
+                            _save_analysis("cal_accuracy", {
+                                r["QC Seviyesi"]: r["Geri Kazanım (%)"]
+                                for r in st.session_state["bulk_acc_rows"]
+                            }, _rout)
+
+                        # Rapor oluştur
+                        _rpaths = generate_reports(_proj, _rout)
+                        st.success("✅ Rapor oluşturuldu!")
+
+                        _rdl1, _rdl2 = st.columns(2)
+                        if "pdf" in _rpaths and _os.path.exists(_rpaths["pdf"]):
+                            with open(_rpaths["pdf"],"rb") as _pf:
+                                _rdl1.download_button(
+                                    "⬇️ PDF İndir", _pf.read(),
+                                    file_name=f"{_banalyte}_ICH_Q2R2_Validation.pdf",
+                                    mime="application/pdf",
+                                    use_container_width=True,
+                                )
+                        elif "pdf_error" in _rpaths:
+                            _rdl1.error(f"PDF: {_rpaths['pdf_error']}")
+
+                        if "docx" in _rpaths and _os.path.exists(_rpaths["docx"]):
+                            with open(_rpaths["docx"],"rb") as _wf:
+                                _rdl2.download_button(
+                                    "⬇️ Word İndir (.docx)", _wf.read(),
+                                    file_name=f"{_banalyte}_ICH_Q2R2_Validation.docx",
+                                    mime="application/vnd.openxmlformats-officedocument"
+                                          ".wordprocessingml.document",
+                                    use_container_width=True,
+                                )
+                        elif "docx_error" in _rpaths:
+                            _rdl2.error(f"DOCX: {_rpaths['docx_error']}")
+
+                    except Exception as _re:
+                        st.error(f"Rapor hatası: {_re}")
+                        import traceback; st.code(traceback.format_exc())
+
+            # ── AI Destekli Yorum ─────────────────────────────────────────────
+            st.markdown("### 🤖 AI Destekli Yorum (Yüksek İmpakt Dergi Formatı)")
+            st.caption(
+                "AI, tüm validasyon sonuçlarını analiz ederek Methods & Results bölümüne "
+                "doğrudan eklenebilecek, hakemlik sürecine uygun İngilizce metin üretir."
+            )
+            if "bulk_full_res" in st.session_state:
+                _ai_kwargs_bulk = {
+                    "results":  st.session_state["bulk_full_res"],
+                    "analyte":  st.session_state.get("bulk_analyte","Analyte"),
+                    "unit":     st.session_state.get("cal_unit","μM"),
+                    "precision_results": st.session_state.get("bulk_prec_res"),
+                    "accuracy_rows":     st.session_state.get("bulk_acc_rows"),
+                    "sa_results":        st.session_state.get("bulk_sa_res"),
+                    "journal":           st.session_state.get("bulk_journal_sel",""),
+                    "language":          st.session_state.get("bulk_rep_lang","English"),
+                }
+                _ai_interpret_btn("cal", interpret_calibration, _ai_kwargs_bulk,
+                                  result_key="bulk_ai_text")
 
     left,right = st.columns([1,1])
     with left:
