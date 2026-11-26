@@ -92,9 +92,17 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 /* ── Global font ───────────────────────────────────────── */
+/* [data-testid] kasıtlı çıkarıldı: Streamlit'in Lucide ikonlarını bozuyor */
 html, body, [class*="css"],
-.stApp, .stMarkdown, .stText, button, input, select, textarea,
-[data-testid] { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+.stApp, .stMarkdown, .stText,
+button, input, select, textarea,
+p, li, td, th, label, caption, figcaption,
+h1, h2, h3, h4, h5, h6
+{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }
+
+/* Streamlit'in SVG/Lucide ikon elementlerini fonttan koru */
+svg, svg *, [class*="icon"], [class*="Icon"],
+span[data-baseweb], [role="img"] { font-family: inherit; }
 
 /* ── Sidebar ────────────────────────────────────────────── */
 [data-testid="stSidebar"] {
@@ -385,9 +393,13 @@ with st.sidebar:
     if _keep_alive:
         st.components.v1.html(
             """<script>
+            /* Reload yerine hafif health ping — session sıfırlanmıyor */
             if (!window._silKA) {
                 window._silKA = true;
-                setTimeout(function() { window.location.reload(); }, 240000);
+                setInterval(function() {
+                    fetch('/_stcore/health', {method: 'GET', cache: 'no-store'})
+                        .catch(function() {});
+                }, 180000); /* 3 dakikada bir */
             }
             </script>""",
             height=0,
