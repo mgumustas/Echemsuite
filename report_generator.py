@@ -131,7 +131,7 @@ def generate_pdf(project: dict, output_path: str, report_type: str = "detailed")
 
     # ── styles ──────────────────────────────────────────────
     styles = getSampleStyleSheet()
-    navy   = colors.HexColor("#1f4e79")
+    navy   = colors.HexColor("#1a3a5c")
     steel  = colors.HexColor("#2e75b6")
     light  = colors.HexColor("#f0f4f8")
 
