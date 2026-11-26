@@ -229,10 +229,10 @@ def interpret_calibration(api_key: str, results: dict,
         if accuracy_rows:
             acc_block = "\nAccuracy / Recovery:\n"
             for row in accuracy_rows:
-                acc_block += (f"  {row['QC Seviyesi']}: nominal={list(row.values())[1]} {unit}, "
-                              f"recovery={row['Geri Kazanım (%)']:.2f}%, "
-                              f"%RSD={row['ip %RSD']:.2f}%, "
-                              f"{'PASS' if 98<=row['Geri Kazanım (%)']<=102 else 'FAIL'}\n")
+                acc_block += (f"  {row['QC Level']}: nominal={list(row.values())[1]} {unit}, "
+                              f"recovery={row['Recovery (%)']:.2f}%, "
+                              f"%RSD={row['%RSD']:.2f}%, "
+                              f"{'PASS' if 98<=row['Recovery (%)']<=102 else 'FAIL'}\n")
 
         # Build standard addition block
         sa_block = ""
