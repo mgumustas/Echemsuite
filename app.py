@@ -467,30 +467,6 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Oturumu canlı tut ────────────────────────────────────
-    _keep_alive = st.checkbox(
-        "🔁 Oturumu açık tut (her 4 dk yenile)",
-        value=st.session_state.get("keep_alive", False),
-        key="keep_alive_cb",
-        help="Uzun süre analiz yapmadan bekliyorsanız oturumun kapanmaması için işaretleyin. "
-             "Sayfa sessizce yenilenir; veriler kaydedildiğinden kayıp olmaz."
-    )
-    st.session_state["keep_alive"] = _keep_alive
-    if _keep_alive:
-        # 4 dakika = 240 000 ms
-        st.components.v1.html(
-            """<script>
-            if (!window._silKA) {
-                window._silKA = true;
-                setTimeout(function() { window.location.reload(); }, 240000);
-            }
-            </script>""",
-            height=0,
-        )
-        st.caption("⏱ Sayfa 4 dakikada bir sessizce yenilenecek.")
-
-    st.divider()
-
     # ── Navigation ───────────────────────────────────────────
     _NAV_OPTIONS = [
         "🏠  Home",
@@ -517,6 +493,28 @@ with st.sidebar:
 **Calibration:** `Concentration`, `ip_1`, `ip_2`, …
 **Std addition:** `Addition`(µM), `ip`(µA)
         """)
+
+    st.divider()
+    # ── Oturumu canlı tut ────────────────────────────────────
+    _keep_alive = st.checkbox(
+        "🔁 Oturumu açık tut (her 4 dk yenile)",
+        value=st.session_state.get("keep_alive", False),
+        key="keep_alive_cb",
+        help="Uzun süre analiz yapmadan bekliyorsanız oturumun kapanmaması için işaretleyin. "
+             "Sayfa sessizce yenilenir; veriler kaydedildiğinden kayıp olmaz."
+    )
+    st.session_state["keep_alive"] = _keep_alive
+    if _keep_alive:
+        st.components.v1.html(
+            """<script>
+            if (!window._silKA) {
+                window._silKA = true;
+                setTimeout(function() { window.location.reload(); }, 240000);
+            }
+            </script>""",
+            height=0,
+        )
+        st.caption("⏱ Sayfa 4 dk'da bir yenileniyor.")
 
 
 # ═══════════════════════════════════════════════════════════
