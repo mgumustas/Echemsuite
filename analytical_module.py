@@ -664,6 +664,370 @@ def ich_q2_precision_validation(intraday_data, interday_data=None,
 # 6. KOMPLE ANALİTİK PERFORMANS
 # ══════════════════════════════════════════════════════════════
 
+def _export_calibration_excel(cal_data, cal_results,
+                              analyte_name='Analyte', unit='μM',
+                              electrode_area_cm2=None,
+                              rsd_results=None, rec_df=None,
+                              output_dir='results_analytical'):
+    """
+    Kalibrasyon sonuçlarını detaylı çok-sayfalı Excel dosyasına aktar.
+
+    Sayfalar
+    --------
+    1. Özet       – Analitik performans metrikleri tablosu
+    2. Veri       – Her konsantrasyon için tüm tekrarlar + ortalama, SD, %RSD
+    3. Artıklar   – Regresyon artıkları ve yüzde artıklar
+    4. Grafik     – ScatterChart (hata çubukları + fit doğrusu) gömülü
+    5. Geri Kaz.  – Geri kazanım tablosu (varsa)
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import (Font, PatternFill, Alignment, Border, Side,
+                                      numbers)
+        from openpyxl.chart import ScatterChart, Series, Reference
+        from openpyxl.chart.error_bar import ErrorBars
+        from openpyxl.chart.data_source import NumDataSource, NumRef
+        from openpyxl.utils import get_column_letter
+    except ImportError as e:
+        print(f"  [Excel] openpyxl import hatası: {e}")
+        return None
+
+    xl_path = os.path.join(output_dir, 'kalibrasyon_raporu.xlsx')
+    wb = Workbook()
+
+    # ── Stil yardımcıları ──────────────────────────────────────────────────
+    NAVY   = "1F4E79"
+    ORANGE = "C55A11"
+    LGRAY  = "D9E1F2"
+    MGRAY  = "BDD7EE"
+    WHITE  = "FFFFFF"
+
+    def _hdr_font(bold=True, color=WHITE, size=11):
+        return Font(bold=bold, color=color, name='Calibri', size=size)
+
+    def _hdr_fill(color=NAVY):
+        return PatternFill("solid", fgColor=color)
+
+    def _sub_fill(color=LGRAY):
+        return PatternFill("solid", fgColor=color)
+
+    def _border():
+        thin = Side(style='thin', color='AAAAAA')
+        return Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _fmt_cell(ws, row, col, value, bold=False, fill=None,
+                  number_format=None, align='left', color='000000'):
+        c = ws.cell(row=row, column=col, value=value)
+        c.font = Font(bold=bold, name='Calibri', size=10, color=color)
+        if fill:
+            c.fill = fill
+        if number_format:
+            c.number_format = number_format
+        c.alignment = Alignment(horizontal=align, vertical='center', wrap_text=True)
+        c.border = _border()
+        return c
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SAYFA 1: ÖZET
+    # ══════════════════════════════════════════════════════════════════════
+    ws_sum = wb.active
+    ws_sum.title = "Özet"
+    ws_sum.column_dimensions['A'].width = 38
+    ws_sum.column_dimensions['B'].width = 28
+
+    # Başlık
+    ws_sum.merge_cells('A1:B1')
+    title_cell = ws_sum['A1']
+    title_cell.value = f"ANALİTİK PERFORMANS RAPORU — {analyte_name.upper()}"
+    title_cell.font  = Font(bold=True, name='Calibri', size=13, color=WHITE)
+    title_cell.fill  = _hdr_fill(NAVY)
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws_sum.row_dimensions[1].height = 24
+
+    # Alt başlık
+    ws_sum.merge_cells('A2:B2')
+    ws_sum['A2'].value = f"SilverstoneLab Echem Suite  |  Konsantrasyon birimi: {unit}"
+    ws_sum['A2'].font  = Font(italic=True, name='Calibri', size=9, color='555555')
+    ws_sum['A2'].alignment = Alignment(horizontal='center')
+
+    # Parametre / Değer header
+    row = 3
+    for col, val in enumerate(['Parametre', 'Değer'], start=1):
+        _fmt_cell(ws_sum, row, col, val, bold=True,
+                  fill=_hdr_fill(MGRAY), color=NAVY, align='center')
+    row += 1
+
+    slope     = cal_results['slope']
+    intercept = cal_results['intercept']
+    r_val     = cal_results['r']
+    r2_val    = r_val ** 2
+    lod       = cal_results['LOD']
+    loq       = cal_results['LOQ']
+    s_yx      = cal_results.get('s_yx', np.nan)
+    lin_range = cal_results['linear_range']
+    sens      = slope
+
+    metrics = [
+        ("Analît",                    analyte_name),
+        ("Lineer aralık",             f"{lin_range[0]:.4g} – {lin_range[1]:.4g} {unit}"),
+        ("Regresyon denklemi",        f"ip = {slope:.4f}·C + ({intercept:.4f})"),
+        ("Eğim (slope), μA/{unit}",   slope),
+        ("Kesim (intercept), μA",     intercept),
+        ("Korelasyon katsayısı (r)",  r_val),
+        ("R² (belirlilik katsayısı)", r2_val),
+        ("Regresyon std. hatası syx", s_yx),
+        (f"LOD (3σ/m), {unit}",       lod),
+        (f"LOQ (10σ/m), {unit}",      loq),
+        (f"Hassasiyet (μA/{unit})",   sens),
+    ]
+    if electrode_area_cm2:
+        metrics.append((f"Norm. hassasiyet (μA/{unit}·cm²)",
+                        cal_results.get('sensitivity', np.nan)))
+    if rsd_results:
+        for k, v in rsd_results.items():
+            metrics.append((f"%RSD ({k})", f"{v:.2f}%"))
+
+    for i, (param, val) in enumerate(metrics):
+        fill = _sub_fill(LGRAY) if i % 2 == 0 else None
+        _fmt_cell(ws_sum, row, 1, param, fill=fill)
+        if isinstance(val, float):
+            _fmt_cell(ws_sum, row, 2, val, fill=fill,
+                      number_format='0.000000', align='right')
+        else:
+            _fmt_cell(ws_sum, row, 2, str(val), fill=fill, align='right')
+        row += 1
+
+    ws_sum.freeze_panes = 'A4'
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SAYFA 2: VERİ (Genişletilmiş)
+    # ══════════════════════════════════════════════════════════════════════
+    ws_data = wb.create_sheet("Veri")
+    ws_data.column_dimensions['A'].width = 20
+
+    # cal_data sütunlarını bul (load_calibration_data çeşitli isimler üretebilir)
+    _conc_candidates = ['concentration_uM', 'conc_uM', 'concentration', 'conc']
+    conc_col = next((c for c in _conc_candidates if c in cal_data.columns), cal_data.columns[0])
+    mean_col = next((c for c in ['ip_uA_mean', 'ip_mean', 'mean'] if c in cal_data.columns), None)
+    std_col  = next((c for c in ['ip_uA_std',  'ip_std',  'std']  if c in cal_data.columns), None)
+    n_col    = next((c for c in ['n_rep', 'n', 'count']            if c in cal_data.columns), None)
+
+    # Tekrar sütunları (rep_1, rep_2, ... veya ip_1, ip_2, ...)
+    rep_cols = [c for c in cal_data.columns
+                if c.startswith('rep_') or (c.startswith('ip_') and c[-1].isdigit())]
+
+    max_reps = len(rep_cols)
+    # Başlık satırı
+    headers = [f"Konsantrasyon ({unit})"]
+    for r in range(1, max_reps + 1):
+        headers.append(f"Tekrar {r} (μA)")
+    headers += ["Ortalama (μA)", "SD (μA)", "%RSD", "n"]
+
+    ws_data.merge_cells(f'A1:{get_column_letter(len(headers))}1')
+    ws_data['A1'].value = f"KALİBRASYON VERİSİ — {analyte_name}"
+    ws_data['A1'].font  = Font(bold=True, name='Calibri', size=12, color=WHITE)
+    ws_data['A1'].fill  = _hdr_fill(NAVY)
+    ws_data['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws_data.row_dimensions[1].height = 20
+
+    for col_i, hdr in enumerate(headers, start=1):
+        ws_data.column_dimensions[get_column_letter(col_i)].width = 16
+        _fmt_cell(ws_data, 2, col_i, hdr, bold=True,
+                  fill=_hdr_fill(MGRAY), color=NAVY, align='center')
+
+    data_start_row = 3
+    for i, row_s in enumerate(cal_data.itertuples(), start=0):
+        r = data_start_row + i
+        fill = _sub_fill(LGRAY) if i % 2 == 0 else None
+        conc_val = getattr(row_s, conc_col, None)
+        _fmt_cell(ws_data, r, 1, conc_val, fill=fill,
+                  number_format='0.0000', align='center')
+
+        for j, rc in enumerate(rep_cols, start=1):
+            rv = getattr(row_s, rc, np.nan)
+            _fmt_cell(ws_data, r, 1 + j, None if (isinstance(rv, float) and np.isnan(rv)) else rv,
+                      fill=fill, number_format='0.0000', align='center')
+
+        mean_v = getattr(row_s, mean_col, np.nan) if mean_col else np.nan
+        std_v  = getattr(row_s, std_col,  np.nan) if std_col  else np.nan
+        n_v    = getattr(row_s, n_col,    np.nan) if n_col    else np.nan
+        rsd_v  = (std_v / mean_v * 100) if (mean_v and mean_v != 0 and not np.isnan(std_v)) else np.nan
+
+        col_offset = 1 + max_reps
+        _fmt_cell(ws_data, r, col_offset + 1, mean_v, fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_data, r, col_offset + 2, std_v,  fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_data, r, col_offset + 3, rsd_v,  fill=fill, number_format='0.00"%"', align='center')
+        _fmt_cell(ws_data, r, col_offset + 4, int(n_v) if not np.isnan(n_v) else '',
+                  fill=fill, align='center')
+
+    ws_data.freeze_panes = 'A3'
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SAYFA 3: ARTIKLAR
+    # ══════════════════════════════════════════════════════════════════════
+    ws_res = wb.create_sheet("Artıklar")
+    res_headers = [f"Konsantrasyon ({unit})", "ip_ort (μA)",
+                   "ip_tahmin (μA)", "Artık (μA)", "Artık (%)", "Leverage"]
+    ws_res.merge_cells(f'A1:{get_column_letter(len(res_headers))}1')
+    ws_res['A1'].value = f"REGRESYON ARTIKLARI — {analyte_name}"
+    ws_res['A1'].font  = Font(bold=True, name='Calibri', size=12, color=WHITE)
+    ws_res['A1'].fill  = _hdr_fill(NAVY)
+    ws_res['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    ws_res.row_dimensions[1].height = 20
+
+    for ci, hdr in enumerate(res_headers, start=1):
+        ws_res.column_dimensions[get_column_letter(ci)].width = 20
+        _fmt_cell(ws_res, 2, ci, hdr, bold=True,
+                  fill=_hdr_fill(MGRAY), color=NAVY, align='center')
+
+    C_arr  = cal_data[conc_col].values.astype(float)
+    if mean_col:
+        ip_arr = cal_data[mean_col].values.astype(float)
+    else:
+        ip_arr = cal_data.iloc[:, 1].values.astype(float)
+    ip_fit = slope * C_arr + intercept
+    n_pts  = len(C_arr)
+    C_mean = C_arr.mean()
+    SS_xx  = np.sum((C_arr - C_mean) ** 2)
+
+    for i, (c_v, ip_v, fit_v) in enumerate(zip(C_arr, ip_arr, ip_fit)):
+        r = 3 + i
+        fill = _sub_fill(LGRAY) if i % 2 == 0 else None
+        resid   = ip_v - fit_v
+        resid_p = (resid / fit_v * 100) if fit_v != 0 else np.nan
+        lev     = 1 / n_pts + (c_v - C_mean) ** 2 / SS_xx
+        _fmt_cell(ws_res, r, 1, c_v,     fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_res, r, 2, ip_v,    fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_res, r, 3, fit_v,   fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_res, r, 4, resid,   fill=fill, number_format='0.0000', align='center')
+        _fmt_cell(ws_res, r, 5, resid_p, fill=fill, number_format='0.00',   align='center')
+        _fmt_cell(ws_res, r, 6, lev,     fill=fill, number_format='0.0000', align='center')
+
+    ws_res.freeze_panes = 'A3'
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SAYFA 4: GRAFİK — ScatterChart + ErrorBars
+    # ══════════════════════════════════════════════════════════════════════
+    ws_chart = wb.create_sheet("Grafik")
+    ws_chart.column_dimensions['A'].width = 22
+    ws_chart.column_dimensions['B'].width = 18
+    ws_chart.column_dimensions['C'].width = 18
+    ws_chart.column_dimensions['D'].width = 18
+    ws_chart.column_dimensions['E'].width = 18
+
+    # Grafik ham veri: konsantrasyon, ip_ort, SD, ip_fit, SD+, SD-
+    ws_chart['A1'].value = f"Konsantrasyon ({unit})"
+    ws_chart['B1'].value = "ip_ort (μA)"
+    ws_chart['C1'].value = "SD (μA)"
+    ws_chart['D1'].value = "ip_fit (μA)"
+    ws_chart['E1'].value = "SD+ (hata üst)"
+    ws_chart['F1'].value = "SD- (hata alt)"
+    for ci in range(1, 7):
+        c = ws_chart.cell(row=1, column=ci)
+        c.font = Font(bold=True, name='Calibri', size=10, color=WHITE)
+        c.fill = _hdr_fill(NAVY)
+        c.alignment = Alignment(horizontal='center')
+
+    if std_col:
+        sd_arr = cal_data[std_col].values.astype(float)
+    else:
+        sd_arr = np.zeros(len(C_arr))
+    sd_arr = np.nan_to_num(sd_arr, nan=0.0)
+
+    for i, (c_v, ip_v, sd_v, fit_v) in enumerate(zip(C_arr, ip_arr, sd_arr, ip_fit)):
+        r = i + 2
+        ws_chart.cell(row=r, column=1, value=float(c_v))
+        ws_chart.cell(row=r, column=2, value=float(ip_v))
+        ws_chart.cell(row=r, column=3, value=float(sd_v))
+        ws_chart.cell(row=r, column=4, value=float(fit_v))
+        ws_chart.cell(row=r, column=5, value=float(sd_v))   # üst hata
+        ws_chart.cell(row=r, column=6, value=float(sd_v))   # alt hata
+
+    chart_rows = n_pts + 1   # son veri satırı indeksi (1-bazlı)
+
+    # ScatterChart oluştur
+    chart = ScatterChart()
+    chart.title = f"{analyte_name} Kalibrasyon Eğrisi"
+    chart.style = 10
+    chart.x_axis.title = f"Konsantrasyon ({unit})"
+    chart.y_axis.title = "Peak Akım (μA)"
+    chart.x_axis.numFmt = '0.0'
+    chart.y_axis.numFmt = '0.00'
+    chart.width  = 20
+    chart.height = 14
+
+    # Seri 1: Deneysel noktalar (scatter, hata çubuklu)
+    xvals_exp = Reference(ws_chart, min_col=1, min_row=2, max_row=chart_rows)
+    yvals_exp = Reference(ws_chart, min_col=2, min_row=2, max_row=chart_rows)
+    ser_exp = Series(yvals_exp, xvals_exp, title="Deneysel (ort ± SD)")
+    ser_exp.marker.symbol = "circle"
+    ser_exp.marker.size   = 7
+    ser_exp.marker.graphicalProperties.solidFill   = "1F4E79"
+    ser_exp.marker.graphicalProperties.line.solidFill = "1F4E79"
+    ser_exp.graphicalProperties.line.noFill = True   # sadece işaretçi
+
+    # Hata çubukları (SD)
+    if sd_arr.sum() > 0:
+        try:
+            plus_ref  = NumRef(f=f"'Grafik'!$E$2:$E${chart_rows}")
+            minus_ref = NumRef(f=f"'Grafik'!$F$2:$F${chart_rows}")
+            plus_src  = NumDataSource(numRef=plus_ref)
+            minus_src = NumDataSource(numRef=minus_ref)
+            eb = ErrorBars(
+                errDir='y', errValType='cust',
+                plus=plus_src, minus=minus_src
+            )
+            ser_exp.errBars = eb
+        except Exception as _eb_err:
+            print(f"  [Excel] ErrorBars eklenemedi: {_eb_err}")
+
+    chart.series.append(ser_exp)
+
+    # Seri 2: Fit doğrusu
+    xvals_fit = Reference(ws_chart, min_col=1, min_row=2, max_row=chart_rows)
+    yvals_fit = Reference(ws_chart, min_col=4, min_row=2, max_row=chart_rows)
+    ser_fit = Series(yvals_fit, xvals_fit, title=f"Regresyon (R²={r2_val:.4f})")
+    ser_fit.marker.symbol = "none"
+    ser_fit.graphicalProperties.line.solidFill = "C55A11"
+    ser_fit.graphicalProperties.line.width      = 18000   # 1.5pt ×12700
+    chart.series.append(ser_fit)
+
+    # Grafik sayfasına yerleştir (H2 hücresinden başla)
+    ws_chart.add_chart(chart, "H2")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # SAYFA 5: GERİ KAZANIM (opsiyonel)
+    # ══════════════════════════════════════════════════════════════════════
+    if rec_df is not None and not rec_df.empty:
+        ws_rec = wb.create_sheet("Geri Kazanım")
+        ws_rec.merge_cells(f'A1:{get_column_letter(len(rec_df.columns))}1')
+        ws_rec['A1'].value = f"GERİ KAZANIM ANALİZİ — {analyte_name}"
+        ws_rec['A1'].font  = Font(bold=True, name='Calibri', size=12, color=WHITE)
+        ws_rec['A1'].fill  = _hdr_fill(NAVY)
+        ws_rec['A1'].alignment = Alignment(horizontal='center', vertical='center')
+        ws_rec.row_dimensions[1].height = 20
+
+        for ci, col_name in enumerate(rec_df.columns, start=1):
+            ws_rec.column_dimensions[get_column_letter(ci)].width = 20
+            _fmt_cell(ws_rec, 2, ci, col_name, bold=True,
+                      fill=_hdr_fill(MGRAY), color=NAVY, align='center')
+
+        for ri, row_s in enumerate(rec_df.itertuples(index=False), start=0):
+            r = 3 + ri
+            fill = _sub_fill(LGRAY) if ri % 2 == 0 else None
+            for ci, v in enumerate(row_s, start=1):
+                if isinstance(v, float):
+                    _fmt_cell(ws_rec, r, ci, v, fill=fill, number_format='0.00', align='center')
+                else:
+                    _fmt_cell(ws_rec, r, ci, v, fill=fill, align='center')
+
+        ws_rec.freeze_panes = 'A3'
+
+    # ── Kaydet ────────────────────────────────────────────────────────────
+    wb.save(xl_path)
+    return xl_path
+
+
 def run_analytical_performance(calibration_source, analyte_name='Analyte',
                                 electrode_area_cm2=None, unit='μM',
                                 rsd_data=None, recovery_data=None,
@@ -752,17 +1116,27 @@ def run_analytical_performance(calibration_source, analyte_name='Analyte',
     summary_path = os.path.join(output_dir, 'analytical_performance_summary.csv')
     summary_df.to_csv(summary_path)
 
-    # Excel özet (opsiyonel — pandas + openpyxl gerekli)
+    # Excel — detaylı rapor + grafik
     try:
-        xl_path = os.path.join(output_dir, 'analytical_performance_summary.xlsx')
-        with pd.ExcelWriter(xl_path, engine='openpyxl') as writer:
-            summary_df.to_excel(writer, sheet_name='Performance')
-            cal_data.to_excel(writer, sheet_name='Calibration_Data', index=False)
-            if rec_df is not None:
-                rec_df.to_excel(writer, sheet_name='Recovery', index=False)
-        print(f"  Excel özeti → {xl_path}")
-    except Exception:
-        pass   # openpyxl yoksa sessizce atla
+        xl_path = _export_calibration_excel(
+            cal_data, cal_results,
+            analyte_name=analyte_name, unit=unit,
+            electrode_area_cm2=electrode_area_cm2,
+            rsd_results=rsd_results, rec_df=rec_df,
+            output_dir=output_dir
+        )
+        if xl_path:
+            print(f"  Excel raporu → {xl_path}")
+    except Exception as _xl_err:
+        print(f"  [Excel] hata: {_xl_err}")
+        # yedek: sade yazım
+        try:
+            xl_path = os.path.join(output_dir, 'analytical_performance_summary.xlsx')
+            with pd.ExcelWriter(xl_path, engine='openpyxl') as writer:
+                summary_df.to_excel(writer, sheet_name='Özet')
+                cal_data.to_excel(writer, sheet_name='Kalibrasyon_Verisi', index=False)
+        except Exception:
+            pass
 
     print(f"\n{'═'*55}")
     print("ANALİTİK PERFORMANS ÖZET")
