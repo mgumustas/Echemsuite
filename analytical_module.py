@@ -198,8 +198,12 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
              label=f'ip = {slope:.4f}C + {intercept:.4f}\nr = {r:.5f}')
 
     # %95 güven aralığı (prediction interval)
+    # t_crit: scipy ile doğru serbestlik derecesinde hesaplanır (df = n-2)
+    # Sabit 2.0 kullanmak küçük n değerlerinde hatalı (n=5: t=3.18, n=4: t=4.30)
+    from scipy.stats import t as _t_dist
     n_pts   = len(C)
-    t_crit  = 2.0   # ~t_{0.025, n-2} ≈ 2 for n≥10
+    df_resid = max(n_pts - 2, 1)   # sıfır bölme koruması
+    t_crit  = _t_dist.ppf(0.975, df=df_resid)
     se_pred = s_yx * np.sqrt(1 + 1/n_pts + (C_fit - C.mean())**2 / np.sum((C - C.mean())**2))
     ax1.fill_between(C_fit, ip_fit - t_crit*se_pred, ip_fit + t_crit*se_pred,
                      alpha=0.12, color=_colors[1 % len(_colors)], label='95% PI')
@@ -229,7 +233,7 @@ def calibration_analysis(cal_data, analyte_name='Analyte', electrode_area_cm2=No
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'calibration_curve.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"\n  Grafik kaydedildi: {out_path}")
 
@@ -419,6 +423,15 @@ def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
     # Numune konsantrasyonu: x-eksenini kesme noktası = −C_sample
     # ip = slope × C_add + intercept = 0  →  C_add_xintercept = −intercept/slope  (negatif)
     # C_sample = |x-intercept| = intercept / slope  (pozitif)
+    #
+    # ⚠ DİLÜSYON DÜZELTMESİ NOTU:
+    # Bu hesap, her standart eklemesinde toplam hacmin sabit kaldığını varsayar
+    # (örn. çok küçük hacimde konsantre standart eklenir → hacim ihmal edilebilir).
+    # Eğer eklenen standart hacimleri numune hacmine (sample_volume_mL) göre
+    # ihmal edilemez düzeydeyse, C_sample gerçek konsantrasyondan yüksek çıkar.
+    # Düzeltme: C_sample_gerçek = C_sample × (V_numune / (V_numune + V_ekleme_toplam))
+    # Bu uygulamada hacim düzeltmesi kullanıcıya bırakılmıştır; ekleme hacimleri
+    # numune hacminin <1%'i ise düzeltme ihmal edilebilir.
     C_sample = intercept / slope
 
     print(f"\n{'═'*55}")
@@ -427,6 +440,7 @@ def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
     print(f"Denklem  : ip = {slope:.4f} × C + {intercept:.4f}")
     print(f"R²       : {r_sq:.6f}")
     print(f"\n▶ Numunedeki {analyte_name} = {C_sample:.4f} μM")
+    print(f"   (Hacim düzeltmesi uygulanmadı — ekleme hacimleri ihmal edilebilir varsayımı)")
 
     # Grafik
     _ps = plot_style or {}
@@ -460,7 +474,7 @@ def standard_addition(additions_uM, ip_uA, sample_volume_mL=10.0,
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'standard_addition.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"  Grafik: {out_path}")
 
@@ -615,7 +629,7 @@ def ich_q2_precision_validation(intraday_data, interday_data=None,
     plt.tight_layout()
     _add_watermark(fig)
     out_path = os.path.join(output_dir, 'ich_q2_precision.png')
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=300, bbox_inches='tight')
     plt.close()
     print(f"\n  Grafik: {out_path}")
 
