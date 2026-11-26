@@ -129,19 +129,28 @@ html, body, [class*="css"],
     margin-bottom: 0.6rem;
 }
 
-/* ── Metric / result cards ───────────────────────────────── */
-.metric-card {
+/* ── Native Streamlit metric widget — aynı tasarım dili ─── */
+/* .metric-card CSS'i st.metric() native bileşenine uygulandı */
+[data-testid="stMetric"] {
     background: linear-gradient(135deg, #f4f8ff 0%, #eaf1fb 100%);
     border: 1px solid #c8daf0;
     border-radius: 12px;
-    padding: 14px 18px;
-    margin-bottom: 10px;
+    padding: 12px 16px !important;
     transition: box-shadow 0.2s;
 }
-.metric-card:hover { box-shadow: 0 4px 16px rgba(27,74,145,0.12); }
-.metric-card .label { font-size: 0.75rem; color: #5a7a9a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-.metric-card .value { font-size: 1.35rem; color: #1a3a5c; font-weight: 700; margin-top: 2px; }
-.metric-card .unit  { font-size: 0.8rem;  color: #7a9ab8; margin-left: 3px; }
+[data-testid="stMetric"]:hover { box-shadow: 0 4px 16px rgba(27,74,145,0.12); }
+[data-testid="stMetricLabel"] > div {
+    font-size: 0.72rem !important;
+    color: #5a7a9a !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+[data-testid="stMetricValue"] {
+    color: #1a3a5c !important;
+    font-weight: 700 !important;
+    font-size: 1.3rem !important;
+}
 
 /* ── AI interpretation box ───────────────────────────────── */
 .interp-box {
@@ -599,8 +608,8 @@ with st.sidebar:
     # ── Plot Style ───────────────────────────────────────────
     with st.expander("🎨 Plot Style"):
         _PALETTES = {
-            "Navy Classic":  ['#1f4e79','#c55a11','#375623','#7030a0','#843c0c',
-                              '#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd'],
+            "Navy Classic":  ['#1a3a5c','#c55a11','#375623','#7030a0','#843c0c',
+                              '#2b7cb8','#ff7f0e','#2ca02c','#d62728','#9467bd'],
             "Matplotlib":    ['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd',
                               '#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf'],
             "Vibrant":       ['#E63946','#457B9D','#2D6A4F','#F4A261','#7B2D8B',
@@ -1124,7 +1133,7 @@ elif page == "📈  CV — Scan Rate Study":
             # ── Renk seçiciler ───────────────────────────────────────────
             if rate_map:
                 _cv_base = st.session_state.get("plot_style",{}).get(
-                    "colors", ['#1f4e79','#c55a11','#375623','#7030a0',
+                    "colors", ['#1a3a5c','#c55a11','#375623','#7030a0',
                                '#843c0c','#1f77b4','#ff7f0e','#2ca02c'])
                 st.markdown('<div class="sec">🎨 Dataset Colors</div>',
                             unsafe_allow_html=True)
@@ -1160,7 +1169,7 @@ elif page == "📈  CV — Scan Rate Study":
         if "cv" in _cur().get("analyses", {}):
             st.warning("⚠️ A CV analysis is already saved for this project. Running again will overwrite it.")
     if disk_map and st.button("▶ Run CV Analysis",type="primary",use_container_width=True):
-        with st.spinner("Analysing…"):
+        with st.spinner("⚙️ Analysing CV data — ECSA, mechanism, k°…"):
             out = os.path.join(tmpdir,"cv_out"); os.makedirs(out,exist_ok=True)
             try:
                 _cv_ps = dict(st.session_state.get("plot_style") or {})
@@ -1262,7 +1271,7 @@ elif page == "🔵  EIS — Impedance":
                 _eis_labels.append(lbl)
             # ── Renk seçiciler ───────────────────────────────────────────
             _eis_base = st.session_state.get("plot_style",{}).get(
-                "colors", ['#1f4e79','#c55a11','#375623','#7030a0',
+                "colors", ['#1a3a5c','#c55a11','#375623','#7030a0',
                            '#843c0c','#1f77b4','#ff7f0e','#2ca02c'])
             st.markdown('<div class="sec">🎨 Dataset Colors</div>',
                         unsafe_allow_html=True)
@@ -1305,7 +1314,7 @@ elif page == "🔵  EIS — Impedance":
         if "eis" in _cur().get("analyses", {}):
             st.warning("⚠️ An EIS analysis is already saved for this project. Running again will overwrite it.")
     if file_dict and st.button("▶ Run EIS Analysis",type="primary",use_container_width=True):
-        with st.spinner("Fitting…"):
+        with st.spinner("⚙️ Fitting Randles-CPE equivalent circuit — may take a moment…"):
             out=os.path.join(tmpdir,"eis_out"); os.makedirs(out,exist_ok=True)
             try:
                 _eis_ps = dict(st.session_state.get("plot_style") or {})
@@ -1392,7 +1401,7 @@ elif page == "🧪  pH — Working pH":
 
     # ── pH Renk seçiciler ─────────────────────────────────────────────────
     _ph_base = st.session_state.get("plot_style",{}).get(
-        "colors", ['#1f4e79','#c55a11'])
+        "colors", ['#1a3a5c','#c55a11'])
     st.markdown('<div class="sec">🎨 Plot Colors</div>', unsafe_allow_html=True)
     _phc1, _phc2 = st.columns(2)
     _ph_data_col = _phc1.color_picker(
@@ -1411,7 +1420,7 @@ elif page == "🧪  pH — Working pH":
             try:
                 _ph_ps = dict(st.session_state.get("plot_style") or {})
                 _ph_ps["colors"] = st.session_state.get(
-                    "ph_custom_colors", _ph_ps.get("colors", ['#1f4e79','#c55a11']))
+                    "ph_custom_colors", _ph_ps.get("colors", ['#1a3a5c','#c55a11']))
                 res=run_ph_analysis(ph_path,int(ph_n_el),pk_type,out,
                                     plot_style=_ph_ps)
                 st.success("✅ Done — results saved to project")
@@ -2105,7 +2114,7 @@ elif page == "📊  Calibration & LOD/LOQ":
 
     # ── Kalibrasyon Renk Seçiciler ────────────────────────────
     _cal_base = st.session_state.get("plot_style",{}).get(
-        "colors", ['#1f4e79','#c55a11'])
+        "colors", ['#1a3a5c','#c55a11'])
     st.markdown('<div class="sec">🎨 Plot Colors</div>', unsafe_allow_html=True)
     _calc1, _calc2 = st.columns(2)
     _cal_data_col = _calc1.color_picker(
@@ -2628,13 +2637,13 @@ elif page == "📊  Calibration & LOD/LOQ":
         if "cal" in _cur().get("analyses", {}):
             st.warning("⚠️ A calibration analysis is already saved for this project. Running again will overwrite it.")
     if cal_data and st.button("▶ Run Calibration Analysis",type="primary",use_container_width=True):
-        with st.spinner("Computing…"):
+        with st.spinner("⚙️ Computing calibration curve, LOD/LOQ, sensitivity…"):
             tmpdir=tempfile.mkdtemp()
             out=os.path.join(tmpdir,"cal_out"); os.makedirs(out)
             try:
                 _cal_ps = dict(st.session_state.get("plot_style") or {})
                 _cal_ps["colors"] = st.session_state.get(
-                    "cal_custom_colors", _cal_ps.get("colors", ['#1f4e79','#c55a11']))
+                    "cal_custom_colors", _cal_ps.get("colors", ['#1a3a5c','#c55a11']))
                 res=run_analytical_performance(
                     calibration_source=cal_data,analyte_name=analyte,
                     electrode_area_cm2=float(area_cal) if area_cal>0 else None,
