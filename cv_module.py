@@ -164,7 +164,8 @@ def find_cv_peaks(df, smooth=True, window=11, polyorder=3):
 # ══════════════════════════════════════════════════════════════
 
 def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
-                         n_electrons=1, use_anodic=True, output_dir='.'):
+                         n_electrons=1, use_anodic=True, output_dir='.',
+                         plot_style=None):
     """
     Randles-Ševčík denklemiyle Elektroaktif Yüzey Alanı (ECSA) hesabı.
 
@@ -245,15 +246,25 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     print(f"  (n={n_electrons}, D={diffusion_coeff:.2e} cm²/s, C={concentration_mM} mM)")
 
     # ── Grafik 1: ip vs ν^(1/2) ─────────────────────────────
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 80)
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # Sol: CV eğrileri (tüm hızlar)
+    # Sol: CV eğrileri (tüm hızlar) — viridis or first colors from palette
     ax1 = axes[0]
-    colors_cv = plt.cm.viridis(np.linspace(0.1, 0.9, len(cv_data)))
+    n_scans = len(cv_data)
+    if len(_colors) >= n_scans:
+        cv_scan_colors = [_colors[i % len(_colors)] for i in range(n_scans)]
+    else:
+        cv_scan_colors = plt.cm.viridis(np.linspace(0.1, 0.9, n_scans))
     for i, rate in enumerate(sorted(cv_data.keys())):
         df = cv_data[rate]
         ax1.plot(df['Potential'], df['Current']*1e6,
-                 color=colors_cv[i], label=f'{rate} mV/s', linewidth=1.5)
+                 color=cv_scan_colors[i], label=f'{rate} mV/s', linewidth=1.5)
     ax1.set_xlabel('Potential (V)')
     ax1.set_ylabel('Current (μA)')
     ax1.set_title('Cyclic Voltammograms')
@@ -266,9 +277,9 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     ip_fit = slope * nu_sqrt_fit + intercept
 
     ax2.scatter(nu_sqrt * 1000, ip * 1e6,
-                color=COLORS[0], s=80, zorder=5, label='Experimental')
+                color=_colors[0], s=_ms, zorder=5, label='Experimental')
     ax2.plot(nu_sqrt_fit * 1000, ip_fit * 1e6,
-             color=COLORS[1], linewidth=2,
+             color=_colors[1 % len(_colors)], linewidth=_lw, linestyle=_ls,
              label=f'Linear fit\ny = {slope*1e6:.4f}x + {intercept*1e6:.4f}\nR² = {r_sq:.5f}')
     ax2.set_xlabel('ν$^{1/2}$ (mV/s)$^{1/2}$')
     ax2.set_ylabel('i$_p$ (μA)')
@@ -294,7 +305,7 @@ def randles_sevcik_ecsa(cv_data, concentration_mM=1.0, diffusion_coeff=7.6e-6,
 # 4. TARAMA HIZI ANALİZİ: DİFÜZYON vs ADSORPSIYON
 # ══════════════════════════════════════════════════════════════
 
-def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.'):
+def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.', plot_style=None):
     """
     log(ip) vs log(ν) analizi ile kontrol mekanizmasını belirler.
 
@@ -324,15 +335,21 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.'):
     slope, intercept, r, p_val, se = stats.linregress(log_nu, log_ip)
     r_sq = r**2
 
+    _ps = plot_style or {}
+    _colors = _ps.get('colors', COLORS)
+    _lw     = _ps.get('linewidth', 2.0)
+    _ls     = _ps.get('fit_linestyle', '--')
+    _ms     = _ps.get('marker_size', 80)
+
     if slope < 0.6:
         mechanism = "Difüzyon Kontrollü (b ≈ 0.5)"
-        color = COLORS[0]
+        color = _colors[0]
     elif slope > 0.85:
         mechanism = "Adsorpsiyon Kontrollü (b ≈ 1.0)"
-        color = COLORS[1]
+        color = _colors[1 % len(_colors)]
     else:
         mechanism = f"Karışık Kontrol (b = {slope:.2f})"
-        color = COLORS[2]
+        color = _colors[2 % len(_colors)]
 
     print("\n" + "═"*50)
     print("TARAMA HIZI MEKANİZMA ANALİZİ")
@@ -349,8 +366,8 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.'):
     log_ip_fit = slope * log_nu_fit + intercept
 
     ax1 = axes[0]
-    ax1.scatter(log_nu, log_ip, color=color, s=80, zorder=5, label='Experimental')
-    ax1.plot(log_nu_fit, log_ip_fit, color='black', linewidth=2,
+    ax1.scatter(log_nu, log_ip, color=color, s=_ms, zorder=5, label='Experimental')
+    ax1.plot(log_nu_fit, log_ip_fit, color='black', linewidth=_lw, linestyle=_ls,
              label=f'b = {slope:.4f}\nR² = {r_sq:.5f}')
     ax1.set_xlabel('log(ν)  [ν: V/s]')
     ax1.set_ylabel('log(i$_p$)  [i$_p$: A]')
@@ -370,10 +387,10 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.'):
     nu_arr = np.array(rates) * 1000  # mV/s
     ip_arr = np.array(ip_vals) * 1e6  # μA
     slope2, int2, r2, _, _ = stats.linregress(nu_arr, ip_arr)
-    ax2.scatter(nu_arr, ip_arr, color=COLORS[0], s=80, zorder=5)
+    ax2.scatter(nu_arr, ip_arr, color=_colors[0], s=_ms, zorder=5)
     nu_fit = np.linspace(nu_arr.min()*0.9, nu_arr.max()*1.1, 100)
-    ax2.plot(nu_fit, slope2*nu_fit + int2, color=COLORS[1], linewidth=2,
-             label=f'R² = {r2**2:.4f}')
+    ax2.plot(nu_fit, slope2*nu_fit + int2, color=_colors[1 % len(_colors)],
+             linewidth=_lw, linestyle=_ls, label=f'R² = {r2**2:.4f}')
     ax2.set_xlabel('ν (mV/s)')
     ax2.set_ylabel('i$_p$ (μA)')
     ax2.set_title('i$_p$ vs ν  (adsorpsiyon kontrolü için doğrusal)')
@@ -397,7 +414,7 @@ def scan_rate_mechanism(cv_data, use_anodic=True, output_dir='.'):
 # ══════════════════════════════════════════════════════════════
 
 def nicholson_k0(cv_data, diffusion_coeff=7.6e-6, n_electrons=1,
-                  temperature=298.15, output_dir='.'):
+                  temperature=298.15, output_dir='.', plot_style=None):
     """
     Nicholson (1965) metodu ile k° hesabı.
 
@@ -479,7 +496,7 @@ def nicholson_k0(cv_data, diffusion_coeff=7.6e-6, n_electrons=1,
 # ══════════════════════════════════════════════════════════════
 
 def run_cv_analysis(file_dict, concentration_mM=1.0, diffusion_coeff=7.6e-6,
-                    n_electrons=1, output_dir='results_cv'):
+                    n_electrons=1, output_dir='results_cv', plot_style=None):
     """
     Tüm CV analizlerini çalıştıran ana fonksiyon.
 
@@ -515,15 +532,16 @@ def run_cv_analysis(file_dict, concentration_mM=1.0, diffusion_coeff=7.6e-6,
     # ECSA
     ecsa_results = randles_sevcik_ecsa(
         cv_data, concentration_mM, diffusion_coeff, n_electrons,
-        output_dir=output_dir
+        output_dir=output_dir, plot_style=plot_style
     )
 
     # Mekanizma
-    mech_results = scan_rate_mechanism(cv_data, output_dir=output_dir)
+    mech_results = scan_rate_mechanism(cv_data, output_dir=output_dir,
+                                        plot_style=plot_style)
 
     # k° (Nicholson)
     k0_results = nicholson_k0(cv_data, diffusion_coeff, n_electrons,
-                               output_dir=output_dir)
+                               output_dir=output_dir, plot_style=plot_style)
 
     # Özet tablo
     peaks_df = ecsa_results['peaks_table']
