@@ -69,7 +69,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from cv_module          import run_cv_analysis
 from eis_module         import run_eis_analysis
 from ph_module          import run_ph_analysis
-from analytical_module  import run_analytical_performance, standard_addition
+from analytical_module  import run_analytical_performance, standard_addition, ich_q2_precision_validation
 from ai_interpreter     import (interpret_cv, interpret_eis, interpret_ph,
                                   interpret_calibration, interpret_standard_addition,
                                   interpret_full_project)
@@ -831,6 +831,15 @@ elif page == "📈  CV — Scan Rate Study":
                 _ai_interpret_btn("cv", interpret_cv,
                                    {"results": res,
                                     "electrode_name": _cur().get("name","")})
+            except ValueError as e:
+                st.error(str(e))
+                st.markdown("""
+**CSV Formatı Kontrol Listesi:**
+- Birinci sütun: `Potential` (V)
+- İkinci sütun: `Current` (A)
+- Tarama hızı bilgisi dosya adında (örn. `cv_50mVs.csv`, `50.csv`)
+- Anodik pik tarama yönünde belirgin olmalı
+""")
             except Exception as e:
                 st.error(str(e))
                 import traceback; st.code(traceback.format_exc())
@@ -1038,6 +1047,154 @@ elif page == "📊  Calibration & LOD/LOQ":
         for _,row in cal_tbl.dropna(subset=[cc,'ip_1 (µA)']).iterrows():
             vals=[float(row[c]) for c in cal_tbl.columns[1:] if pd.notna(row[c])]
             if vals: cal_data[float(row[cc])]=vals
+
+    # ── ICH Q2(R2) Precision Validation ──────────────────────
+    st.divider()
+    with st.expander("🔬 ICH Q2(R2) Kesinlik Validasyonu (İsteğe Bağlı)", expanded=False):
+        st.markdown("""
+**ICH Q2(R2) Kabul Kriterleri:**
+| Kesinlik Tipi | Minimum Şart | %RSD Limiti |
+|---|---|---|
+| **Tekrar Edilebilirlik** (Gün İçi) | ≥3 tekrar, ≥3 konsantrasyon | **≤ %2** |
+| **Ara Kesinlik** (Günler Arası) | ≥3 gün, her günde ≥3 tekrar | **≤ %5** |
+        """)
+
+        ich_tab1, ich_tab2 = st.tabs(["📅 Gün İçi (Repeatability)", "📆 Günler Arası (Intermediate Precision)"])
+
+        # --- Gün İçi -------------------------------------------------
+        with ich_tab1:
+            st.info("Aynı günde, farklı konsantrasyon seviyelerinde yapılan tekrar ölçümler. "
+                    "ICH Q2(R2): en az 3 seviye (düşük/orta/yüksek), her seviyede ≥3 tekrar.")
+            n_intra_levels = st.number_input("Konsantrasyon seviye sayısı", 1, 6, 3,
+                                              key="ich_n_intra", step=1)
+            intra_rows = []
+            for i in range(int(n_intra_levels)):
+                col_lbl, col_vals = st.columns([2, 4])
+                lbl = col_lbl.text_input(f"Seviye {i+1} etiketi",
+                                          value=f"Seviye {i+1}",
+                                          key=f"ich_intra_lbl_{i}")
+                vals_str = col_vals.text_input("Pik akımları μA (virgülle ayır, min 3)",
+                                               placeholder="15.21, 15.43, 15.18, 15.35",
+                                               key=f"ich_intra_vals_{i}")
+                intra_rows.append((lbl, vals_str))
+
+        # --- Günler Arası --------------------------------------------
+        with ich_tab2:
+            st.info("Aynı konsantrasyon seviyesinde farklı günlerde yapılan ölçümler. "
+                    "Her gün en az 3 tekrar önerilir.")
+            n_inter_days = st.number_input("Gün sayısı", 1, 10, 3,
+                                            key="ich_n_inter", step=1)
+            inter_rows = []
+            for i in range(int(n_inter_days)):
+                col_lbl, col_vals = st.columns([2, 4])
+                lbl = col_lbl.text_input(f"Gün etiketi",
+                                          value=f"Gün {i+1}",
+                                          key=f"ich_inter_lbl_{i}")
+                vals_str = col_vals.text_input("Pik akımları μA (virgülle ayır, min 3)",
+                                               placeholder="15.21, 15.43, 15.18",
+                                               key=f"ich_inter_vals_{i}")
+                inter_rows.append((lbl, vals_str))
+
+        if st.button("▶ ICH Q2(R2) Validasyon Hesapla", type="secondary", use_container_width=True,
+                     key="btn_ich_q2"):
+            # Parse intra-day
+            intraday_data_ich = {}
+            for lbl, vs in intra_rows:
+                if vs.strip():
+                    try:
+                        vals = [float(x.strip()) for x in vs.split(',') if x.strip()]
+                        if len(vals) >= 2:
+                            intraday_data_ich[lbl] = vals
+                    except ValueError:
+                        pass
+
+            # Parse inter-day
+            interday_data_ich = {}
+            for lbl, vs in inter_rows:
+                if vs.strip():
+                    try:
+                        vals = [float(x.strip()) for x in vs.split(',') if x.strip()]
+                        if len(vals) >= 2:
+                            interday_data_ich[lbl] = vals
+                    except ValueError:
+                        pass
+
+            if not intraday_data_ich:
+                st.error("En az 1 gün içi veri grubu girilmeli (etiket + virgülle ayrılmış değerler).")
+            else:
+                with st.spinner("ICH Q2(R2) hesaplanıyor…"):
+                    ich_out = os.path.join(tempfile.mkdtemp(), "ich_out")
+                    os.makedirs(ich_out, exist_ok=True)
+                    try:
+                        ich_res = ich_q2_precision_validation(
+                            intraday_data=intraday_data_ich,
+                            interday_data=interday_data_ich if interday_data_ich else None,
+                            analyte_name=analyte,
+                            unit=conc_unit,
+                            output_dir=ich_out,
+                            plot_style=st.session_state.get("plot_style")
+                        )
+
+                        # ── Metrikler ──
+                        intra_ok = ich_res['overall_intra_pass']
+                        inter_ok = ich_res['overall_inter_pass']
+                        intra_rsd_max = ich_res['intra_max_rsd']
+                        inter_rsd_tot = ich_res['inter_total_rsd']
+
+                        c1, c2 = st.columns(2)
+                        intra_icon = "✅" if intra_ok else "❌"
+                        c1.metric(f"{intra_icon} Gün İçi Maks. %RSD",
+                                  f"{intra_rsd_max:.2f}%",
+                                  delta=f"Limit: 2.0% — {'Geçti' if intra_ok else 'BAŞARISIZ'}",
+                                  delta_color="normal" if intra_ok else "inverse")
+                        if inter_rsd_tot is not None:
+                            inter_icon = "✅" if inter_ok else "❌"
+                            c2.metric(f"{inter_icon} Günler Arası Toplam %RSD",
+                                      f"{inter_rsd_tot:.2f}%",
+                                      delta=f"Limit: 5.0% — {'Geçti' if inter_ok else 'BAŞARISIZ'}",
+                                      delta_color="normal" if inter_ok else "inverse")
+
+                        # ── Detay tablosu ──
+                        st.markdown("**Gün İçi Sonuçları:**")
+                        rows_disp = []
+                        for lbl, r in ich_res['intraday'].items():
+                            rows_disp.append({
+                                'Grup': lbl, 'n': r['n'],
+                                'Ortalama (μA)': f"{r['mean']:.4f}",
+                                'SD (μA)': f"{r['std']:.4f}",
+                                '%RSD': f"{r['rsd']:.2f}%",
+                                'ICH Limit': '≤2%',
+                                'Durum': '✅ Geçti' if r['pass'] else '❌ Başarısız'
+                            })
+                        st.dataframe(pd.DataFrame(rows_disp),
+                                     use_container_width=True, hide_index=True)
+
+                        if ich_res['interday']:
+                            st.markdown("**Günler Arası Sonuçları:**")
+                            rows_inter_disp = []
+                            for day, r in ich_res['interday'].items():
+                                if day.startswith('_'):
+                                    continue
+                                rows_inter_disp.append({
+                                    'Gün': day, 'n': r['n'],
+                                    'Ortalama (μA)': f"{r['mean']:.4f}",
+                                    'SD (μA)': f"{r['std']:.4f}",
+                                    '%RSD (gün içi)': f"{r['rsd']:.2f}%",
+                                })
+                            st.dataframe(pd.DataFrame(rows_inter_disp),
+                                         use_container_width=True, hide_index=True)
+                            if inter_rsd_tot is not None:
+                                inter_icon = "✅" if inter_ok else "❌"
+                                st.markdown(f"**Günler arası toplam %RSD:** {inter_rsd_tot:.2f}%  "
+                                            f"(ICH limit ≤5%)  {inter_icon}")
+
+                        # ── Grafik ──
+                        _show_imgs(ich_out)
+                        _dl_btn(ich_out, "ich_q2_validation.zip")
+
+                    except Exception as e:
+                        st.error(f"ICH Q2 hesaplama hatası: {e}")
+                        import traceback; st.code(traceback.format_exc())
 
     if cal_data and st.button("▶ Run Calibration Analysis",type="primary",use_container_width=True):
         with st.spinner("Computing…"):
