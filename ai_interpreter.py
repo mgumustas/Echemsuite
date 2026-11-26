@@ -324,6 +324,112 @@ Discuss:
     return _call(api_key, prompt, model)
 
 
+def interpret_selectivity(api_key: str, results: list, analyte: str = "analyte",
+                          threshold_pct: float = 5.0, model: str = "claude-opus-5-5") -> str:
+    """AI interpretation for selectivity / interferent study."""
+    if not results:
+        return "No selectivity data provided."
+    n_total = len(results)
+    n_pass  = sum(1 for r in results if "✅" in str(r.get("Status", "")))
+    fail_list = [r.get("Interferent", r.get("interferent", "?")) for r in results
+                 if "❌" in str(r.get("Status", ""))]
+    rows_txt = "\n".join(
+        f"  {r.get('Interferent', r.get('interferent','?'))}: "
+        f"signal change = {r.get('Signal Change (%)', r.get('change_pct','?'))}%, "
+        f"status = {r.get('Status','?')}"
+        for r in results
+    )
+    prompt = f"""Interpret the following selectivity study for the electrochemical detection of {analyte}.
+Interference threshold: ±{threshold_pct:.0f}% signal change.
+
+Results ({n_pass}/{n_total} passed):
+{rows_txt}
+
+Discuss:
+1. The overall selectivity profile — which interferents posed the greatest challenge and why,
+   based on expected redox potentials or non-specific binding mechanisms.
+2. Whether the {threshold_pct:.0f}% threshold is appropriate for the intended application
+   (clinical, environmental, or food analysis) and how it compares to ICH or AOAC criteria.
+3. If any interferents failed, propose practical mitigation strategies (potential selection,
+   masking agents, sample pre-treatment, or modified electrode chemistry).
+4. The practical significance: can the sensor be deployed in real matrices such as serum,
+   urine, or food extracts without prior removal of the failing interferents?"""
+    return _call(api_key, prompt, model)
+
+
+def interpret_stability(api_key: str, results: list, analyte: str = "analyte",
+                        threshold_pct: float = 90.0, model: str = "claude-opus-5-5") -> str:
+    """AI interpretation for storage/operational stability study."""
+    if not results:
+        return "No stability data provided."
+    days  = [r.get("Day", r.get("day", "?")) for r in results]
+    recs  = [r.get("% Recovery", r.get("recovery_pct", None)) for r in results]
+    valid = [(d, r) for d, r in zip(days, recs) if r is not None]
+    last_day = valid[-1][0] if valid else "?"
+    last_rec = valid[-1][1] if valid else "?"
+    n_fail   = sum(1 for r in results if "❌" in str(r.get("Status", "")))
+    rows_txt = "\n".join(
+        f"  Day {r.get('Day','?')}: {r.get('% Recovery','?')}% recovery — {r.get('Status','?')}"
+        for r in results
+    )
+    prompt = f"""Interpret the following storage stability study for an electrochemical sensor
+detecting {analyte}. The minimum acceptable recovery threshold is {threshold_pct:.0f}%.
+
+Day-by-day recovery data:
+{rows_txt}
+
+Summary: {len(valid)} time points, final recovery = {last_rec}% at day {last_day}, {n_fail} time point(s) below threshold.
+
+Discuss:
+1. The stability profile — characterise the degradation trend (linear, exponential, plateau)
+   and identify the inflection point where performance begins to degrade meaningfully.
+2. The estimated shelf-life based on the threshold, and how this compares to practical
+   requirements for electrochemical sensors reported in the literature (typically 2–8 weeks).
+3. Likely degradation mechanisms for the electrode modification (leaching of nanomaterials,
+   oxidation of mediators, biofouling, electrolyte ingress) based on the observed trend.
+4. Recommended storage conditions or electrode stabilisation strategies to extend shelf-life."""
+    return _call(api_key, prompt, model)
+
+
+def interpret_surface(api_key: str, metrics: dict, electrode_name: str = "modified electrode",
+                      model: str = "claude-opus-5-5") -> str:
+    """AI interpretation for surface characterization (EIS + CV bare vs modified)."""
+    if not metrics:
+        return "No surface characterization data provided."
+    rct_b = metrics.get("Rct Bare (Ω)", metrics.get("rct_bare", "N/A"))
+    rct_m = metrics.get("Rct Modified (Ω)", metrics.get("rct_mod", "N/A"))
+    ratio = metrics.get("Rct Ratio (Bare/Mod)", "N/A")
+    ipa_b = metrics.get("Ipa Bare (µA)", metrics.get("ipa_bare", "N/A"))
+    ipa_m = metrics.get("Ipa Modified (µA)", metrics.get("ipa_mod", "N/A"))
+    enhance = metrics.get("Signal Enhancement", "N/A")
+    sem_note = metrics.get("SEM observation", "")
+
+    prompt = f"""Interpret the following surface characterization data for {electrode_name}
+compared to bare GCE, obtained by EIS (Nyquist) and CV in a redox probe solution.
+
+EIS results:
+  Rct (bare GCE) = {rct_b} Ω
+  Rct (modified) = {rct_m} Ω
+  Rct ratio (bare/modified) = {ratio}
+
+CV results (peak anodic current, ip,a):
+  Bare GCE: {ipa_b} µA
+  Modified:  {ipa_m} µA
+  Signal enhancement: {enhance}
+{f"SEM observation: {sem_note}" if sem_note else ""}
+
+Discuss:
+1. What the change in Rct reveals about the electron-transfer kinetics after surface modification —
+   whether the modification facilitates or hinders charge transfer and why.
+2. The correlation between the EIS Rct change and the CV current enhancement, and whether
+   they are consistent with the proposed modification mechanism.
+3. How these surface characterization results support the electrode's suitability for
+   electrocatalytic sensing of the target analyte.
+4. Any anomalies (e.g. Rct increase combined with current enhancement, or vice versa)
+   that warrant further investigation."""
+    return _call(api_key, prompt, model)
+
+
 def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-5-5") -> str:
     """Generate an executive summary for the whole project."""
     analyses = project.get("analyses", {})
@@ -388,16 +494,44 @@ def interpret_full_project(api_key: str, project: dict, model: str = "claude-opu
         r2  = m.get("R2", "")
         sections.append(f"Standard Addition: [sample]={c} µM, R²={r2}")
 
+    # Selectivity
+    if "sel" in analyses:
+        m = analyses["sel"].get("metrics", {})
+        n_tested = m.get("Interferents tested", "?")
+        pass_rate = m.get("Pass rate", "?")
+        threshold = m.get("Threshold", "?")
+        sections.append(f"Selectivity: {n_tested} interferents tested, pass rate={pass_rate}, threshold={threshold}")
+
+    # Stability
+    if "stab" in analyses:
+        m = analyses["stab"].get("metrics", {})
+        days = m.get("Days monitored", "?")
+        final_rec = m.get("Final recovery", "?")
+        threshold = m.get("Min. threshold", "?")
+        status = m.get("Final status", "?")
+        sections.append(f"Stability: {days} time points, final recovery={final_rec} (threshold {threshold}), final status={status}")
+
+    # Surface characterization
+    if "surf" in analyses:
+        m = analyses["surf"].get("metrics", {})
+        rct_b = m.get("Rct Bare (Ω)", "?")
+        rct_m = m.get("Rct Modified (Ω)", "?")
+        ratio = m.get("Rct Ratio (Bare/Mod)", "?")
+        enhance = m.get("Signal Enhancement", "?")
+        sections.append(f"Surface Characterization: Rct(bare)={rct_b} Ω, Rct(modified)={rct_m} Ω, ratio={ratio}, signal enhancement={enhance}")
+
     summary_block = "\n\n".join(sections)
     proj_name = project.get("name", "Untitled Project")
 
-    # Kayıtlı AI yorumlarını da ekle (varsa)
+    # Include saved AI interpretations from all modules
+    _all_labels = {"cv":"CV","eis":"EIS","ph":"pH","cal":"Calibration","sa":"Standard Addition",
+                   "sel":"Selectivity","stab":"Stability","surf":"Surface Characterization"}
     interp_block = []
-    for key in ("cv", "eis", "ph", "cal", "sa"):
+    for key in ("cv", "eis", "ph", "cal", "sa", "sel", "stab", "surf"):
         if key in analyses:
             saved_interp = analyses[key].get("interpretation", "").strip()
             if saved_interp:
-                label = {"cv":"CV","eis":"EIS","ph":"pH","cal":"Calibration","sa":"Standard Addition"}[key]
+                label = _all_labels.get(key, key)
                 interp_block.append(f"[{label} AI interpretation]\n{saved_interp[:600]}")
     interp_section = ("\n\n".join(interp_block)
                       if interp_block else "")
