@@ -775,6 +775,10 @@ Write a concise Methods/Results-style paragraph (2–3 paragraphs) suitable for 
 4. End with one sentence listing all final optimized values as they would appear in a
    Methods section ("The optimal conditions were determined to be: pulse amplitude X mV,
    step potential Y mV, ...").
+5. Close with one brief sentence acknowledging the inherent limitation of OFAT optimization:
+   that it evaluates each factor independently and therefore cannot capture interaction
+   effects between parameters; note that response surface methodology (e.g. Box-Behnken or
+   central composite design) would be required to fully characterize factor interactions.
 
 Use plain text — no LaTeX. Use µA, mV, ms, s, V, µL directly."""
 
