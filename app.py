@@ -4444,51 +4444,86 @@ elif page == "📚  Literature Comparison":
             f"Sensitivity: **{_lit_own_sens:.4f} µA/{_lit_unit}**"
         )
 
-    st.markdown("---")
-    st.markdown("#### Add literature entries")
+    # ── Session-state tabanlı satır yönetimi ─────────────────────────────────
+    if "lit_rows_data" not in st.session_state:
+        st.session_state.lit_rows_data = []
 
-    _lit_n = st.number_input("Number of literature rows", min_value=1, max_value=20, value=5, key="lit_n")
-
-    # Header
-    _lhdr = st.columns([2, 2, 1.5, 1.5, 1.5, 1.5])
-    for _h, _t in zip(_lhdr, ["Electrode / Modifier", "Method", f"LOD ({_lit_unit})",
-                                f"Linear range ({_lit_unit})", f"Sensitivity (µA/{_lit_unit})", "Reference"]):
-        _h.markdown(f"**{_t}**")
-
-    _lit_rows = []
-    for _li in range(int(_lit_n)):
-        _lc = st.columns([2, 2, 1.5, 1.5, 1.5, 1.5])
-        _electrode = _lc[0].text_input(f"Electrode {_li+1}", value="", key=f"lit_elec_{_li}",
-                                        label_visibility="collapsed", placeholder="e.g. GCE/MoS₂")
-        _method    = _lc[1].text_input(f"Method {_li+1}", value="", key=f"lit_meth_{_li}",
-                                        label_visibility="collapsed", placeholder="e.g. DPV")
-        _lod_v     = _lc[2].text_input(f"LOD {_li+1}", value="", key=f"lit_lod_{_li}",
-                                        label_visibility="collapsed", placeholder="0.01")
-        _lr_v      = _lc[3].text_input(f"LR {_li+1}", value="", key=f"lit_lr_{_li}",
-                                        label_visibility="collapsed", placeholder="0.1–100")
-        _sens_v    = _lc[4].text_input(f"Sens {_li+1}", value="", key=f"lit_sens_{_li}",
-                                        label_visibility="collapsed", placeholder="1.23")
-        _ref_v     = _lc[5].text_input(f"Ref {_li+1}", value="", key=f"lit_ref_{_li}",
-                                        label_visibility="collapsed", placeholder="Author, Year")
-        if _electrode.strip():
-            _lit_rows.append({
-                "Electrode/Modifier": _electrode,
-                "Method": _method,
-                f"LOD ({_lit_unit})": _lod_v,
-                f"Linear range ({_lit_unit})": _lr_v,
-                f"Sensitivity": _sens_v,
-                "Reference": _ref_v,
+    # Otomatik çekilen satırları aktar
+    if st.session_state.get("lit_import_pending") and st.session_state.get("lit_fetched_rows"):
+        for _fr in st.session_state.lit_fetched_rows:
+            st.session_state.lit_rows_data.append({
+                "Electrode/Modifier": _fr.get("Electrode/Modifier", ""),
+                "Method":             _fr.get("Method", ""),
+                "LOD":                _fr.get("LOD", ""),
+                "Linear range":       _fr.get("Linear range", ""),
+                "Sensitivity":        _fr.get("Sensitivity", ""),
+                "Reference":          _fr.get("Reference", ""),
             })
+        st.session_state.lit_import_pending = False
+        st.session_state.lit_fetched_rows   = []
 
-    # Always append own sensor as last row
+    st.markdown("---")
+    st.markdown("#### Literature entries")
+
+    # Kolon başlıkları
+    _lhdr = st.columns([2, 1.5, 1.5, 2, 1.5, 2, 0.6])
+    for _hcol, _ht in zip(_lhdr, ["Electrode/Modifier", "Method",
+                                    f"LOD ({_lit_unit})", f"Linear range ({_lit_unit})",
+                                    "Sensitivity", "Reference", ""]):
+        _hcol.markdown(f"**{_ht}**")
+
+    # Satırları render et — her birinde 🗑️ butonu
+    _del_idx = None
+    for _li, _row in enumerate(st.session_state.lit_rows_data):
+        _lc = st.columns([2, 1.5, 1.5, 2, 1.5, 2, 0.6])
+        _row["Electrode/Modifier"] = _lc[0].text_input(
+            f"elec_{_li}", value=_row.get("Electrode/Modifier",""),
+            key=f"lit_elec_{_li}", label_visibility="collapsed", placeholder="GCE/MoS₂")
+        _row["Method"] = _lc[1].text_input(
+            f"meth_{_li}", value=_row.get("Method",""),
+            key=f"lit_meth_{_li}", label_visibility="collapsed", placeholder="DPV")
+        _row["LOD"] = _lc[2].text_input(
+            f"lod_{_li}", value=_row.get("LOD",""),
+            key=f"lit_lod_{_li}", label_visibility="collapsed", placeholder="0.01")
+        _row["Linear range"] = _lc[3].text_input(
+            f"lr_{_li}", value=_row.get("Linear range",""),
+            key=f"lit_lr_{_li}", label_visibility="collapsed", placeholder="0.1–100")
+        _row["Sensitivity"] = _lc[4].text_input(
+            f"sens_{_li}", value=_row.get("Sensitivity",""),
+            key=f"lit_sens_{_li}", label_visibility="collapsed", placeholder="1.23")
+        _row["Reference"] = _lc[5].text_input(
+            f"ref_{_li}", value=_row.get("Reference",""),
+            key=f"lit_ref_{_li}", label_visibility="collapsed", placeholder="Author, Year")
+        if _lc[6].button("🗑️", key=f"lit_del_{_li}", help="Satırı sil"):
+            _del_idx = _li
+
+    if _del_idx is not None:
+        st.session_state.lit_rows_data.pop(_del_idx)
+        st.rerun()
+
+    # ➕ Yeni boş satır ekle
+    _add_col, _clr_col = st.columns([1, 1])
+    if _add_col.button("➕ Satır ekle", key="lit_add_row"):
+        st.session_state.lit_rows_data.append(
+            {"Electrode/Modifier":"","Method":"","LOD":"","Linear range":"","Sensitivity":"","Reference":""})
+        st.rerun()
+    if _clr_col.button("🗑️ Tümünü temizle", key="lit_clear_all"):
+        st.session_state.lit_rows_data = []
+        st.rerun()
+
+    # Dolu satırları filtrele
+    _lit_rows = [r for r in st.session_state.lit_rows_data
+                 if r.get("Electrode/Modifier","").strip()]
+
+    # "This work" satırını ekle
     if _dpv_s:
         _lit_rows.append({
-            "Electrode/Modifier": f"**This work** ({_cur().get('name','')})",
+            "Electrode/Modifier": f"This work ({_cur().get('name','')})",
             "Method": "DPV",
-            f"LOD ({_lit_unit})": f"{_lit_own_lod:.4g}" if _lit_own_lod else "",
-            f"Linear range ({_lit_unit})": _lit_own_lr or "",
-            f"Sensitivity": f"{_lit_own_sens:.4f}" if _lit_own_sens else "",
-            "Reference": "This work",
+            "LOD":          f"{_lit_own_lod:.4g}" if _lit_own_lod else "",
+            "Linear range": _lit_own_lr or "",
+            "Sensitivity":  f"{_lit_own_sens:.4f}" if _lit_own_sens else "",
+            "Reference":    "This work",
         })
 
     if _lit_rows:
@@ -4496,26 +4531,32 @@ elif page == "📚  Literature Comparison":
         st.markdown("#### Comparison table")
         import pandas as pd
         _lit_df = pd.DataFrame(_lit_rows)
+        # Kolon adlarını birim içerecek şekilde yeniden adlandır
+        _lit_df = _lit_df.rename(columns={
+            "LOD":          f"LOD ({_lit_unit})",
+            "Linear range": f"Linear range ({_lit_unit})",
+            "Sensitivity":  f"Sensitivity (µA/{_lit_unit})",
+        })
         st.dataframe(_lit_df, use_container_width=True, hide_index=True)
 
-        # Save
+        # Kaydet
         _save_analysis("litcomp", {
-            "analyte":    _lit_analyte,
-            "unit":       _lit_unit,
-            "n_entries":  len(_lit_rows),
-            "entries":    _lit_rows,
+            "analyte":   _lit_analyte,
+            "unit":      _lit_unit,
+            "n_entries": len(_lit_rows),
+            "entries":   _lit_rows,
         }, None)
 
-        # AI summary
+        # AI yorumu
         st.markdown("---")
         st.markdown("#### AI comparison summary")
         _lit_metrics = {
-            "analyte": _lit_analyte,
-            "unit":    _lit_unit,
-            "own_LOD": _lit_own_lod,
+            "analyte":          _lit_analyte,
+            "unit":             _lit_unit,
+            "own_LOD":          _lit_own_lod,
             "own_linear_range": _lit_own_lr,
-            "own_sensitivity": _lit_own_sens,
-            "literature": _lit_rows[:-1] if _dpv_s else _lit_rows,
+            "own_sensitivity":  _lit_own_sens,
+            "literature":       _lit_rows[:-1] if _dpv_s else _lit_rows,
         }
         _ai_interpret_btn(
             "litcomp",
@@ -4527,7 +4568,7 @@ elif page == "📚  Literature Comparison":
         if st.session_state.get("lit_interp"):
             st.markdown(st.session_state["lit_interp"])
     else:
-        st.info("💡 Fill at least one electrode/modifier field to build the table.")
+        st.info("💡 ➕ Satır ekle butonuyla manuel giriş yap ya da Auto-fetch ile Scopus'tan çek.")
 
 
 # ═══════════════════════════════════════════════════════════
