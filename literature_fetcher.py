@@ -3,18 +3,15 @@ literature_fetcher.py
 ─────────────────────
 SilverstoneLab Echem Suite — Literatür otomatik çekme modülü
 
-Scopus (birincil, view=COMPLETE ile abstract dahil)
-  → per-paper abstract fallback (arama sonucu boş gelirse)
-  → OpenAlex (ücretsiz fallback)
-
-Abstractlardan LOD/LOQ, lineer aralık, duyarlılık, elektrot, metot çıkarır.
+Scopus (view=COMPLETE → STANDARD fallback) + OpenAlex (ücretsiz)
+fetch_literature() → (rows: list[dict], status: dict)
+  status = {"source": str, "count": int, "error": str, "abstract_found": int}
 """
 
 from __future__ import annotations
 import re
 import time
 import requests
-from typing import Optional
 
 # ── Regex desenleri ────────────────────────────────────────────────────────────
 _RE_LOD = re.compile(
@@ -42,13 +39,13 @@ _RE_METH = re.compile(
     r"\b(DPV|differential\s+pulse\s+voltammetry"
     r"|SWV|square.?wave\s+voltammetry"
     r"|CV|cyclic\s+voltammetry"
-    r"|CA|chronoamperometry"
-    r"|EIS|amperometry"
+    r"|CA|chronoamperometry|EIS|amperometry"
     r"|DPSV|AdSV|LSASV|SWASV|DPASV|LSV|NPV)\b",
     re.IGNORECASE,
 )
 _RE_ELECTRODE = re.compile(
-    r"\b(GCE|glassy\s+carbon(?:\s+electrode)?|SPCE|screen.?printed(?:\s+carbon)?(?:\s+electrode)?"
+    r"\b(GCE|glassy\s+carbon(?:\s+electrode)?"
+    r"|SPCE|screen.?printed(?:\s+carbon)?(?:\s+electrode)?"
     r"|CPE|carbon\s+paste(?:\s+electrode)?"
     r"|ITO|BDD|BDDE|pencil\s+graphite(?:\s+electrode)?|PGE"
     r"|AuE|gold(?:\s+electrode)?|carbon\s+fiber|graphene"
@@ -58,41 +55,34 @@ _RE_ELECTRODE = re.compile(
 
 
 def _extract_from_abstract(abstract: str, default_unit: str = "µM") -> dict:
-    """Abstracttan metrik çıkar. Eksik alanlar boş string döner."""
     result = {"LOD": "", "Linear range": "", "Sensitivity": "", "Method": "", "Electrode": ""}
     if not abstract:
         return result
-
     m = _RE_LOD.search(abstract)
     if m:
         val  = m.group(1).strip()
         unit = m.group(2).strip() if m.group(2) else default_unit
         result["LOD"] = f"{val} {unit}"
-
     m = _RE_LR.search(abstract)
     if m:
         unit = m.group(3).strip() if m.group(3) else default_unit
         result["Linear range"] = f"{m.group(1)}–{m.group(2)} {unit}"
-
     m = _RE_SENS.search(abstract)
     if m:
         unit = f" {m.group(2).strip()}" if m.group(2) else ""
         result["Sensitivity"] = f"{m.group(1)}{unit}"
-
     m = _RE_METH.search(abstract)
     if m:
         result["Method"] = m.group(1).upper()
-
     m = _RE_ELECTRODE.search(abstract)
     if m:
         result["Electrode"] = m.group(1)
-
     return result
 
 
 # ── Scopus ─────────────────────────────────────────────────────────────────────
-_SCOPUS_SEARCH  = "https://api.elsevier.com/content/search/scopus"
-_SCOPUS_ABSTRACT= "https://api.elsevier.com/content/abstract/scopus_id/{eid}"
+_SCOPUS_SEARCH   = "https://api.elsevier.com/content/search/scopus"
+_SCOPUS_ABSTRACT = "https://api.elsevier.com/content/abstract/scopus_id/{eid}"
 
 
 def _build_scopus_query(analyte: str, electrode: str, year_from: int) -> str:
@@ -108,65 +98,85 @@ def _build_scopus_query(analyte: str, electrode: str, year_from: int) -> str:
 
 
 def _scopus_fetch_abstract(eid: str, api_key: str) -> str:
-    """Tek bir makale için abstract çek (search sonucu boş gelirse fallback)."""
-    url = _SCOPUS_ABSTRACT.format(eid=eid)
+    """Tek makale için abstract çek."""
+    url = _SCOPUS_ABSTRACT.format(eid=eid.replace("2-s2.0-", ""))
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
     try:
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
-            data = r.json()
-            core = (data.get("abstracts-retrieval-response", {})
-                       .get("coredata", {}))
+            core = (r.json()
+                    .get("abstracts-retrieval-response", {})
+                    .get("coredata", {}))
             return core.get("dc:description", "") or ""
     except Exception:
         pass
     return ""
 
 
-def _scopus_search(analyte: str, electrode: str, year_from: int,
-                   max_results: int, api_key: str) -> list[dict]:
-    """Scopus REST API — view=COMPLETE ile abstract dahil."""
+def _scopus_search_with_view(analyte: str, electrode: str, year_from: int,
+                              max_results: int, api_key: str,
+                              view: str = "COMPLETE") -> tuple[list, str]:
+    """
+    Scopus araması. view=COMPLETE abstract içerir ama bazı key'lerde yasak.
+    Hata → ([], hata mesajı) döner.
+    """
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
     params = {
         "query": _build_scopus_query(analyte, electrode, year_from),
         "count": min(max_results, 25),
-        "view":  "COMPLETE",          # abstract dahil
+        "view":  view,
         "sort":  "coverDate",
     }
     try:
         r = requests.get(_SCOPUS_SEARCH, headers=headers, params=params, timeout=20)
-        r.raise_for_status()
-        entries = r.json().get("search-results", {}).get("entry", [])
-        return entries if isinstance(entries, list) else []
-    except Exception:
-        return []
-
-
-def _parse_scopus_entries(entries: list[dict], analyte: str,
-                          api_key: str = "") -> list[dict]:
-    rows = []
-    for e in entries:
-        title    = e.get("dc:title", "")
-        authors  = e.get("dc:creator", "")
-        date     = e.get("prism:coverDate", "")
-        year     = date[:4] if date else ""
-        doi      = e.get("prism:doi", "")
-        eid      = e.get("eid", "")
-
-        # Abstract: view=COMPLETE'te dc:description gelir; yoksa ayrı çek
-        abstract = (e.get("dc:description", "")
-                    or e.get("abstract", "")
-                    or "")
-        if not abstract and eid and api_key:
-            abstract = _scopus_fetch_abstract(eid, api_key)
-            time.sleep(0.3)  # rate limit
-
-        ref_str = ""
-        if authors:
-            ref_str = authors.split(",")[0].strip() + f" et al., {year}"
+        if r.status_code == 200:
+            entries = r.json().get("search-results", {}).get("entry", [])
+            if isinstance(entries, list) and entries:
+                # Bazen tek sonuç dict olarak gelir
+                if isinstance(entries[0], dict) and "error" in entries[0]:
+                    return [], f"Scopus query error: {entries[0].get('error')}"
+            return (entries if isinstance(entries, list) else []), ""
         else:
-            ref_str = year
+            # HTTP hata — mesajı çıkar
+            try:
+                err_body = r.json()
+                err_msg = (err_body.get("service-error", {})
+                                   .get("status", {})
+                                   .get("statusText", r.text[:200]))
+            except Exception:
+                err_msg = r.text[:200]
+            return [], f"Scopus HTTP {r.status_code}: {err_msg}"
+    except requests.exceptions.Timeout:
+        return [], "Scopus timeout — VPN/kampüs ağı aktif mi?"
+    except requests.exceptions.ConnectionError as e:
+        return [], f"Scopus bağlantı hatası: {e}"
+    except Exception as e:
+        return [], f"Scopus beklenmeyen hata: {e}"
 
+
+def _parse_scopus_entries(entries: list, api_key: str = "",
+                           fetch_missing: bool = True) -> tuple[list, int]:
+    """Girişleri satıra çevirir. (rows, abstract_found_count) döner."""
+    rows = []
+    abstract_found = 0
+    for e in entries:
+        title   = e.get("dc:title", "")
+        authors = e.get("dc:creator", "")
+        date    = e.get("prism:coverDate", "")
+        year    = date[:4] if date else ""
+        doi     = e.get("prism:doi", "")
+        eid     = e.get("eid", "")
+
+        abstract = e.get("dc:description", "") or e.get("abstract", "") or ""
+        if not abstract and eid and api_key and fetch_missing:
+            abstract = _scopus_fetch_abstract(eid, api_key)
+            time.sleep(0.3)
+
+        if abstract:
+            abstract_found += 1
+
+        ref_str = (authors.split(",")[0].strip() + f" et al., {year}"
+                   if authors else year)
         metrics = _extract_from_abstract(abstract)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
@@ -177,35 +187,36 @@ def _parse_scopus_entries(entries: list[dict], analyte: str,
             "Reference":          ref_str,
             "_title":             title,
             "_doi":               doi,
-            "_abstract_len":      len(abstract),
             "_source":            "Scopus",
         })
-    return rows
+    return rows, abstract_found
 
 
-# ── OpenAlex (ücretsiz fallback) ───────────────────────────────────────────────
+# ── OpenAlex ───────────────────────────────────────────────────────────────────
 _OA_SEARCH = "https://api.openalex.org/works"
 
 
 def _openalex_search(analyte: str, electrode: str, year_from: int,
-                     max_results: int) -> list[dict]:
+                     max_results: int) -> tuple[list, str]:
     kw = f"{analyte} electrochemical sensor"
     if electrode:
         kw += f" {electrode}"
     params = {
-        "search":  kw,
-        "filter":  f"from_publication_date:{year_from}-01-01,type:journal-article",
+        "search":   kw,
+        "filter":   f"from_publication_date:{year_from}-01-01,type:journal-article",
         "per-page": min(max_results, 25),
-        "select":  "title,authorships,publication_year,doi,abstract_inverted_index",
-        "sort":    "publication_year:desc",
-        "mailto":  "echem@silverstonesci.com",
+        "select":   "title,authorships,publication_year,doi,abstract_inverted_index",
+        "sort":     "publication_year:desc",
+        "mailto":   "echem@silverstonesci.com",
     }
     try:
         r = requests.get(_OA_SEARCH, params=params, timeout=15)
         r.raise_for_status()
-        return r.json().get("results", [])
-    except Exception:
-        return []
+        return r.json().get("results", []), ""
+    except requests.exceptions.Timeout:
+        return [], "OpenAlex timeout"
+    except Exception as e:
+        return [], f"OpenAlex hata: {e}"
 
 
 def _reconstruct_abstract(inv_index: dict | None) -> str:
@@ -219,8 +230,9 @@ def _reconstruct_abstract(inv_index: dict | None) -> str:
     return " ".join(w for _, w in words)
 
 
-def _parse_oa_entries(entries: list[dict], analyte: str) -> list[dict]:
+def _parse_oa_entries(entries: list) -> tuple[list, int]:
     rows = []
+    abstract_found = 0
     for e in entries:
         title  = e.get("title", "")
         year   = str(e.get("publication_year", ""))
@@ -228,13 +240,13 @@ def _parse_oa_entries(entries: list[dict], analyte: str) -> list[dict]:
         auths  = e.get("authorships", [])
         first  = ""
         if auths:
-            a0 = auths[0].get("author", {})
-            name = a0.get("display_name", "")
+            name  = auths[0].get("author", {}).get("display_name", "")
             first = name.split()[-1] if name else ""
-        ref_str = f"{first} et al., {year}" if first else year
-
+        ref_str  = f"{first} et al., {year}" if first else year
         abstract = _reconstruct_abstract(e.get("abstract_inverted_index"))
-        metrics  = _extract_from_abstract(abstract)
+        if abstract:
+            abstract_found += 1
+        metrics = _extract_from_abstract(abstract)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -244,10 +256,9 @@ def _parse_oa_entries(entries: list[dict], analyte: str) -> list[dict]:
             "Reference":          ref_str,
             "_title":             title,
             "_doi":               doi,
-            "_abstract_len":      len(abstract),
             "_source":            "OpenAlex",
         })
-    return rows
+    return rows, abstract_found
 
 
 # ── Ana fonksiyon ──────────────────────────────────────────────────────────────
@@ -257,22 +268,65 @@ def fetch_literature(
     year_from:   int = 2018,
     max_results: int = 20,
     scopus_key:  str = "",
-) -> list[dict]:
+    prefer_openalex: bool = False,
+) -> tuple[list[dict], dict]:
     """
-    Scopus (view=COMPLETE) → abstract yoksa per-paper fallback → OpenAlex.
-    Dönen liste doğrudan Literature Comparison tablosuna aktarılabilir.
+    Döner: (rows, status)
+    status = {
+      "source":         "Scopus" | "OpenAlex" | "none",
+      "count":          int,
+      "abstract_found": int,
+      "error":          str,   # boş → başarılı
+      "warnings":       list[str],
+    }
     """
-    rows: list[dict] = []
+    status: dict = {"source": "none", "count": 0,
+                    "abstract_found": 0, "error": "", "warnings": []}
 
+    # OpenAlex tercih edilmişse direkt oraya git
+    if prefer_openalex:
+        oa_entries, oa_err = _openalex_search(analyte, electrode, year_from, max_results)
+        if oa_err:
+            status["error"] = oa_err
+            return [], status
+        rows, abs_found = _parse_oa_entries(oa_entries)
+        status.update({"source": "OpenAlex", "count": len(rows),
+                       "abstract_found": abs_found})
+        return rows[:max_results], status
+
+    # Scopus dene
     if scopus_key:
-        entries = _scopus_search(analyte, electrode, year_from, max_results, scopus_key)
-        if entries:
-            rows = _parse_scopus_entries(entries, analyte, api_key=scopus_key)
+        # Önce view=COMPLETE
+        entries, err = _scopus_search_with_view(
+            analyte, electrode, year_from, max_results, scopus_key, view="COMPLETE")
 
-    if not rows:
-        oa_entries = _openalex_search(analyte, electrode, year_from, max_results)
-        rows = _parse_oa_entries(oa_entries, analyte)
+        if err and entries == []:
+            # COMPLETE başarısız → STANDARD ile tekrar dene
+            status["warnings"].append(f"COMPLETE view başarısız ({err}), STANDARD deneniyor…")
+            entries, err = _scopus_search_with_view(
+                analyte, electrode, year_from, max_results, scopus_key, view="STANDARD")
 
-    # Boş reference olanları filtrele
+        if err and entries == []:
+            status["error"] = err
+            status["warnings"].append("Scopus başarısız — OpenAlex'e düşülüyor.")
+        elif entries:
+            rows, abs_found = _parse_scopus_entries(entries, scopus_key, fetch_missing=True)
+            rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
+            status.update({"source": "Scopus", "count": len(rows),
+                           "abstract_found": abs_found})
+            return rows[:max_results], status
+
+    # OpenAlex fallback
+    oa_entries, oa_err = _openalex_search(analyte, electrode, year_from, max_results)
+    if oa_err:
+        if status["error"]:
+            status["error"] += f" | OpenAlex da başarısız: {oa_err}"
+        else:
+            status["error"] = oa_err
+        return [], status
+
+    rows, abs_found = _parse_oa_entries(oa_entries)
     rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
-    return rows[:max_results]
+    status.update({"source": "OpenAlex", "count": len(rows),
+                   "abstract_found": abs_found})
+    return rows[:max_results], status
