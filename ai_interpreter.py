@@ -586,3 +586,152 @@ RULES:
 - Total length: {"220–280" if interp_section else "180–220"} words."""
 
     return _call(api_key, prompt, model)
+
+
+# ─────────────────────────────────────────────────────────────
+# DPV CALIBRATION INTERPRETATION
+# ─────────────────────────────────────────────────────────────
+def interpret_dpv_calibration(api_key: str, metrics: dict,
+                               model: str = "claude-opus-5-5") -> str:
+    """AI interpretation for DPV sensor calibration figures of merit."""
+    if not metrics:
+        return "No calibration data provided."
+
+    analyte   = metrics.get("analyte", "analyte")
+    unit      = metrics.get("unit", "µM")
+    slope     = metrics.get("slope", "N/A")
+    intercept = metrics.get("intercept", "N/A")
+    r2        = metrics.get("R2", "N/A")
+    lod       = metrics.get("LOD", "N/A")
+    loq       = metrics.get("LOQ", "N/A")
+    lr        = metrics.get("linear_range", "N/A")
+    sens      = metrics.get("sensitivity", "N/A")
+    sens_norm = metrics.get("sensitivity_norm")
+    n         = metrics.get("n_points", "N/A")
+    window    = metrics.get("peak_window_V", "N/A")
+
+    prompt = f"""Interpret the following DPV (differential pulse voltammetry) calibration data
+for the electrochemical detection of {analyte} at a modified electrode.
+
+Calibration parameters:
+  Number of calibration points: {n}
+  Peak potential window used: {window} V
+  Linear range: {lr} {unit}
+  Slope (sensitivity): {slope} µA/{unit}
+{f"  Normalised sensitivity: {sens_norm} µA/{unit}·cm²" if sens_norm else ""}
+  Intercept: {intercept} µA
+  Coefficient of determination (R²): {r2}
+  Limit of Detection (3σ/m): {lod} {unit}
+  Limit of Quantification (10σ/m): {loq} {unit}
+
+Discuss the following:
+1. The linearity and quality of the calibration curve: comment on R², the slope, and
+   whether the linear range covers practically relevant concentration levels for the target analyte.
+2. The analytical figures of merit: evaluate LOD and LOQ in the context of real-sample applications
+   (clinical, environmental, food safety) and compare to typical literature benchmarks for this class
+   of analyte and electrode.
+3. The sensitivity: interpret the slope in terms of electrode responsiveness, and comment on
+   the normalised sensitivity if provided.
+4. Any aspects that could be improved (e.g. extending the linear range, reducing the LOD,
+   increasing the number of calibration points) or that indicate a high-performance sensor.
+
+Use plain text — no LaTeX. Use µA, {unit}, Ω, cm² directly. Total: 2–4 paragraphs."""
+
+    return _call(api_key, prompt, model)
+
+
+# ─────────────────────────────────────────────────────────────
+# REAL SAMPLE ANALYSIS INTERPRETATION
+# ─────────────────────────────────────────────────────────────
+def interpret_real_sample(api_key: str, metrics: dict,
+                           model: str = "claude-opus-5-5") -> str:
+    """AI interpretation for spike-recovery real sample analysis."""
+    if not metrics:
+        return "No real sample data provided."
+
+    analyte   = metrics.get("analyte", "analyte")
+    matrix    = metrics.get("matrix", "real sample")
+    unit      = metrics.get("unit", "µM")
+    mean_rec  = metrics.get("mean_recovery_%", "N/A")
+    rsd       = metrics.get("RSD_%", "N/A")
+    n         = metrics.get("n_samples", "N/A")
+    samples   = metrics.get("samples", [])
+    recs      = metrics.get("recoveries", [])
+
+    _sample_lines = "\n".join(
+        f"  {s}: {r}%" for s, r in zip(samples, recs)
+    ) if samples else "  (no individual sample data)"
+
+    prompt = f"""Interpret the following real sample spike-recovery data for the DPV determination
+of {analyte} in {matrix}.
+
+Recovery data:
+  Number of samples: {n}
+  Mean recovery: {mean_rec}%
+  RSD: {rsd}%
+  Individual recoveries:
+{_sample_lines}
+
+Discuss:
+1. Whether the mean recovery and RSD meet the standard acceptability criteria
+   (typically 95–105 % recovery and RSD ≤ 5 % for electroanalytical methods; 90–110 % and
+   RSD ≤ 10 % for complex matrices) and what this means for practical applicability.
+2. The significance of these results for validating the method in {matrix}, including
+   any matrix effects or interferences that may explain deviations if present.
+3. The suitability of this sensor for routine determination of {analyte} in {matrix}
+   based on these recovery data.
+
+Use plain text — no LaTeX. Use µA, {unit} directly. Total: 2–3 paragraphs."""
+
+    return _call(api_key, prompt, model)
+
+
+# ─────────────────────────────────────────────────────────────
+# LITERATURE COMPARISON INTERPRETATION
+# ─────────────────────────────────────────────────────────────
+def interpret_literature_comparison(api_key: str, metrics: dict,
+                                     model: str = "claude-opus-5-5") -> str:
+    """AI interpretation summarising the sensor vs literature."""
+    if not metrics:
+        return "No comparison data provided."
+
+    analyte   = metrics.get("analyte", "analyte")
+    unit      = metrics.get("unit", "µM")
+    own_lod   = metrics.get("own_LOD")
+    own_lr    = metrics.get("own_linear_range")
+    own_sens  = metrics.get("own_sensitivity")
+    lit       = metrics.get("literature", [])
+
+    _lit_lines = ""
+    for _e in lit:
+        _lit_lines += (
+            f"  {_e.get('Electrode/Modifier','?')} | {_e.get('Method','?')} | "
+            f"LOD={_e.get('LOD ('+unit+')', _e.get('LOD','?'))} {unit} | "
+            f"LR={_e.get('Linear range ('+unit+')', _e.get('Linear range','?'))} | "
+            f"Ref: {_e.get('Reference','?')}\n"
+        )
+
+    prompt = f"""Critically compare the following electrochemical sensor for {analyte}
+detection with previously reported sensors in the literature.
+
+This work:
+  LOD: {own_lod:.4g if isinstance(own_lod, float) else own_lod} {unit}
+  Linear range: {own_lr} {unit}
+  Sensitivity: {own_sens:.4f if isinstance(own_sens, float) else own_sens} µA/{unit}
+
+Published sensors:
+{_lit_lines if _lit_lines else "  (no literature entries provided)"}
+
+Provide a concise comparative analysis (2–4 paragraphs):
+1. How does this sensor's LOD compare to the literature? Is it superior, comparable, or inferior?
+   Name specific references where the comparison is most relevant.
+2. How does the linear range cover the practically relevant concentration window for
+   {analyte} in real samples?
+3. Overall, what advances does this sensor offer over existing reported sensors
+   (e.g. simpler fabrication, greener modifier, lower LOD, wider range, faster response)?
+4. Any weaknesses or gaps that should be acknowledged or addressed in future work.
+
+Use plain text — no LaTeX. Write in the style of a Biosensors & Bioelectronics discussion section.
+Total: 3–4 paragraphs."""
+
+    return _call(api_key, prompt, model)
