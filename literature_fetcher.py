@@ -11,6 +11,7 @@ fetch_literature() → (rows: list[dict], status: dict)
 from __future__ import annotations
 import re
 import time
+import json
 import requests
 
 # ── Regex desenleri ────────────────────────────────────────────────────────────
@@ -54,29 +55,128 @@ _RE_ELECTRODE = re.compile(
 )
 
 
-def _extract_from_abstract(abstract: str, default_unit: str = "µM") -> dict:
+_LLM_PROMPT = """\
+You are an expert in electrochemical sensors and voltammetric analytical chemistry.
+Read the abstract below and extract these analytical parameters.
+
+Return ONLY a valid JSON object with exactly these keys (empty string if not found):
+- "LOD": limit of detection — keep the EXACT value and unit from the abstract (e.g. "0.05 µM", "12 nM", "3.2 ng/mL")
+- "Linear range": linear dynamic range — format "low–high unit" (e.g. "0.1–100 µM", "5–500 nM")
+- "Sensitivity": analytical sensitivity — keep value and unit (e.g. "12.5 µA µM⁻¹ cm⁻²", "0.84 µA/µM")
+- "Method": electrochemical technique acronym (e.g. "DPV", "SWV", "CV", "CA", "EIS", "SWASV")
+- "Electrode": working electrode including ALL modifiers, as written (e.g. "MWCNTs/β-CD/GCE", "SPCE", "BiF/CPGE")
+
+Do NOT convert units, do NOT paraphrase, return ONLY the JSON object.
+
+Abstract:
+{abstract}"""
+
+_LLM_KEYS = {"LOD", "Linear range", "Sensitivity", "Method", "Electrode"}
+
+
+def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude") -> dict:
+    """LLM ile abstract'tan elektrokimyasal parametreleri çıkar.
+    Claude Haiku veya GPT-4o-mini kullanır (hızlı + ucuz).
+    Başarısızsa boş dict döner → regex fallback devreye girer."""
+    if not abstract or not ai_key:
+        return {}
+
+    prompt = _LLM_PROMPT.format(abstract=abstract[:3000])  # max ~750 token
+
+    try:
+        if ai_provider == "Claude":
+            import anthropic
+            client = anthropic.Anthropic(api_key=ai_key)
+            msg = client.messages.create(
+                model="claude-haiku-4-5",
+                max_tokens=256,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = msg.content[0].text.strip()
+
+        elif ai_provider == "OpenAI":
+            import openai
+            client = openai.OpenAI(api_key=ai_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                max_tokens=256,
+                response_format={"type": "json_object"},
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.choices[0].message.content.strip()
+
+        elif ai_provider == "Gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=ai_key)
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            resp = model.generate_content(prompt)
+            raw = resp.text.strip()
+
+        else:
+            return {}
+
+        # JSON ayıkla — bazen ```json ... ``` içinde gelir
+        if "```" in raw:
+            raw = re.sub(r"```(?:json)?", "", raw).replace("```", "").strip()
+        # İlk { ... } bloğunu al
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not m:
+            return {}
+        data = json.loads(m.group())
+        # Sadece beklenen anahtarları döndür
+        return {k: str(v).strip() for k, v in data.items() if k in _LLM_KEYS}
+
+    except Exception:
+        return {}
+
+
+def _extract_from_abstract(abstract: str, default_unit: str = "µM",
+                            ai_key: str = "", ai_provider: str = "Claude") -> dict:
+    """
+    Önce LLM ile çıkarım dener (ai_key varsa).
+    LLM'in atladığı alanlar için regex ile tamamlar.
+    """
     result = {"LOD": "", "Linear range": "", "Sensitivity": "", "Method": "", "Electrode": ""}
     if not abstract:
         return result
-    m = _RE_LOD.search(abstract)
-    if m:
-        val  = m.group(1).strip()
-        unit = m.group(2).strip() if m.group(2) else default_unit
-        result["LOD"] = f"{val} {unit}"
-    m = _RE_LR.search(abstract)
-    if m:
-        unit = m.group(3).strip() if m.group(3) else default_unit
-        result["Linear range"] = f"{m.group(1)}–{m.group(2)} {unit}"
-    m = _RE_SENS.search(abstract)
-    if m:
-        unit = f" {m.group(2).strip()}" if m.group(2) else ""
-        result["Sensitivity"] = f"{m.group(1)}{unit}"
-    m = _RE_METH.search(abstract)
-    if m:
-        result["Method"] = m.group(1).upper()
-    m = _RE_ELECTRODE.search(abstract)
-    if m:
-        result["Electrode"] = m.group(1)
+
+    # ── 1. LLM çıkarım ────────────────────────────────────────────────────────
+    if ai_key:
+        llm = _extract_with_llm(abstract, ai_key, ai_provider)
+        for k in result:
+            if llm.get(k):
+                result[k] = llm[k]
+
+    # ── 2. Regex fallback — LLM'in boş bıraktıklarını tamamla ────────────────
+    if not result["LOD"]:
+        m = _RE_LOD.search(abstract)
+        if m:
+            val  = m.group(1).strip()
+            unit = m.group(2).strip() if m.group(2) else default_unit
+            result["LOD"] = f"{val} {unit}"
+
+    if not result["Linear range"]:
+        m = _RE_LR.search(abstract)
+        if m:
+            unit = m.group(3).strip() if m.group(3) else default_unit
+            result["Linear range"] = f"{m.group(1)}–{m.group(2)} {unit}"
+
+    if not result["Sensitivity"]:
+        m = _RE_SENS.search(abstract)
+        if m:
+            unit = f" {m.group(2).strip()}" if m.group(2) else ""
+            result["Sensitivity"] = f"{m.group(1)}{unit}"
+
+    if not result["Method"]:
+        m = _RE_METH.search(abstract)
+        if m:
+            result["Method"] = m.group(1).upper()
+
+    if not result["Electrode"]:
+        m = _RE_ELECTRODE.search(abstract)
+        if m:
+            result["Electrode"] = m.group(1)
+
     return result
 
 
@@ -170,7 +270,8 @@ def _scopus_search_with_view(analyte: str, electrode: str, year_from: int,
 
 
 def _parse_scopus_entries(entries: list, api_key: str = "",
-                           fetch_missing: bool = True) -> tuple[list, int]:
+                           fetch_missing: bool = True,
+                           ai_key: str = "", ai_provider: str = "Claude") -> tuple[list, int]:
     """Girişleri satıra çevirir. (rows, abstract_found_count) döner."""
     rows = []
     abstract_found = 0
@@ -199,7 +300,7 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
 
         ref_str = (authors.split(",")[0].strip() + f" et al., {year}"
                    if authors else year)
-        metrics = _extract_from_abstract(abstract)
+        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -252,7 +353,8 @@ def _reconstruct_abstract(inv_index: dict | None) -> str:
     return " ".join(w for _, w in words)
 
 
-def _parse_oa_entries(entries: list) -> tuple[list, int]:
+def _parse_oa_entries(entries: list, ai_key: str = "",
+                      ai_provider: str = "Claude") -> tuple[list, int]:
     rows = []
     abstract_found = 0
     for e in entries:
@@ -268,7 +370,7 @@ def _parse_oa_entries(entries: list) -> tuple[list, int]:
         abstract = _reconstruct_abstract(e.get("abstract_inverted_index"))
         if abstract:
             abstract_found += 1
-        metrics = _extract_from_abstract(abstract)
+        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -291,6 +393,8 @@ def fetch_literature(
     max_results: int = 20,
     scopus_key:  str = "",
     prefer_openalex: bool = False,
+    ai_key:      str = "",
+    ai_provider: str = "Claude",
 ) -> tuple[list[dict], dict]:
     """
     Döner: (rows, status)
@@ -305,13 +409,19 @@ def fetch_literature(
     status: dict = {"source": "none", "count": 0,
                     "abstract_found": 0, "error": "", "warnings": []}
 
+    _use_ai = bool(ai_key)
+    if _use_ai:
+        status["warnings"].append(
+            f"🤖 AI analiz aktif ({ai_provider}) — abstract'lar LLM ile yorumlanıyor."
+        )
+
     # OpenAlex tercih edilmişse direkt oraya git
     if prefer_openalex:
         oa_entries, oa_err = _openalex_search(analyte, electrode, year_from, max_results)
         if oa_err:
             status["error"] = oa_err
             return [], status
-        rows, abs_found = _parse_oa_entries(oa_entries)
+        rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key, ai_provider=ai_provider)
         status.update({"source": "OpenAlex", "count": len(rows),
                        "abstract_found": abs_found})
         return rows[:max_results], status
@@ -332,7 +442,9 @@ def fetch_literature(
             status["error"] = err
             status["warnings"].append("Scopus başarısız — OpenAlex'e düşülüyor.")
         elif entries:
-            rows, abs_found = _parse_scopus_entries(entries, scopus_key, fetch_missing=True)
+            rows, abs_found = _parse_scopus_entries(
+                entries, scopus_key, fetch_missing=True,
+                ai_key=ai_key, ai_provider=ai_provider)
             rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
             status.update({"source": "Scopus", "count": len(rows),
                            "abstract_found": abs_found})
@@ -347,7 +459,7 @@ def fetch_literature(
             status["error"] = oa_err
         return [], status
 
-    rows, abs_found = _parse_oa_entries(oa_entries)
+    rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key, ai_provider=ai_provider)
     rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
     status.update({"source": "OpenAlex", "count": len(rows),
                    "abstract_found": abs_found})
