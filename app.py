@@ -4367,6 +4367,9 @@ elif page == "📚  Literature Comparison":
         "by most electroanalytical journals. Add rows manually or auto-fetch from Scopus/OpenAlex."
     )
 
+    # Pull own sensor data — tanımı expander'dan önce olmalı
+    _dpv_s = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
+
     # ── Auto-fetch from Scopus / OpenAlex ────────────────────────────────────
     with st.expander("🔍 Auto-fetch from Scopus / OpenAlex", expanded=False):
         _scopus_key_avail = st.session_state.get("scopus_api_key", "")
@@ -4426,8 +4429,7 @@ elif page == "📚  Literature Comparison":
                 st.rerun()
     # ─────────────────────────────────────────────────────────────────────────
 
-    # Pull own sensor data
-    _dpv_s = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
+    # _dpv_s yukarıda tanımlandı (expander'dan önce)
     _lit_analyte = _dpv_s.get("analyte", "")
     _lit_unit    = _dpv_s.get("unit", "µM")
     _lit_own_lod = _dpv_s.get("LOD")
