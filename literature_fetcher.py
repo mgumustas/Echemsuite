@@ -98,7 +98,7 @@ def _build_scopus_query(analyte: str, electrode: str, year_from: int) -> str:
 
 
 def _scopus_fetch_abstract(eid: str, api_key: str) -> str:
-    """Tek makale için abstract çek."""
+    """Tek makale için abstract çek — Scopus Abstract Retrieval API."""
     url = _SCOPUS_ABSTRACT.format(eid=eid.replace("2-s2.0-", ""))
     headers = {"X-ELS-APIKey": api_key, "Accept": "application/json"}
     try:
@@ -108,6 +108,21 @@ def _scopus_fetch_abstract(eid: str, api_key: str) -> str:
                     .get("abstracts-retrieval-response", {})
                     .get("coredata", {}))
             return core.get("dc:description", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _openalex_abstract_by_doi(doi: str) -> str:
+    """DOI kullanarak OpenAlex'ten abstract çek (ücretsiz, kurumsal token gerektirmez)."""
+    if not doi:
+        return ""
+    url = f"https://api.openalex.org/works/https://doi.org/{doi}"
+    try:
+        r = requests.get(url, params={"select": "abstract_inverted_index"}, timeout=10)
+        if r.status_code == 200:
+            inv = r.json().get("abstract_inverted_index")
+            return _reconstruct_abstract(inv)
     except Exception:
         pass
     return ""
@@ -168,9 +183,16 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
         eid     = e.get("eid", "")
 
         abstract = e.get("dc:description", "") or e.get("abstract", "") or ""
-        if not abstract and eid and api_key and fetch_missing:
-            abstract = _scopus_fetch_abstract(eid, api_key)
-            time.sleep(0.3)
+
+        # Scopus'tan abstract gelmemişse: önce Scopus Abstract Retrieval API, sonra OpenAlex by DOI
+        if not abstract and fetch_missing:
+            if eid and api_key:
+                abstract = _scopus_fetch_abstract(eid, api_key)
+                time.sleep(0.3)
+            # Hâlâ boşsa → DOI varsa OpenAlex'ten ücretsiz çek
+            if not abstract and doi:
+                abstract = _openalex_abstract_by_doi(doi)
+                time.sleep(0.2)
 
         if abstract:
             abstract_found += 1
