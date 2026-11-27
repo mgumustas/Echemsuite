@@ -1159,7 +1159,7 @@ if page == "🏠  Home":
         for _i, (_icon, _title, _desc, _nav, _key) in enumerate(_remaining):
             _done_cls = " tile-done" if _key and _key in done else ""
             _done_lbl = " ✓" if _key and _key in done else ""
-            with _cols3[_i]:
+            with _cols3[_i % 3]:
                 st.markdown(f"""
 <div class="tile-card{_done_cls}">
   <div class="tile-icon">{_icon}</div>
@@ -1584,6 +1584,27 @@ elif page == "🧪  pH — Working pH":
                 m2.metric("R²",metrics["R²"])
                 m3.metric("m/n ratio",metrics["m/n ratio"])
                 m4.metric("Optimal pH",metrics["Optimal pH"])
+
+                # ── Mechanism verdict from m/n ratio ───────────
+                _mn = res.get("ratio_m_n", 0)
+                _slope_obs = res.get("slope_mV_per_pH", 0)
+                _slope_pct_err = abs(_slope_obs - theory) / abs(theory) * 100 if theory else 0
+                _mn_round = round(_mn * 2) / 2  # round to nearest 0.5
+                if abs(_mn_round - 1.0) < 0.15:
+                    st.success(f"✅ m/n ≈ 1 — consistent with an equal-proton–equal-electron transfer mechanism "
+                               f"(e.g., 2H⁺/2e⁻ for n={int(ph_n_el)}). "
+                               f"Slope deviation from Nernst theory: {_slope_pct_err:.1f}%.")
+                elif abs(_mn_round - 0.5) < 0.15:
+                    st.info(f"ℹ️ m/n ≈ 0.5 — suggests {int(ph_n_el)} electrons transferred with "
+                            f"{int(ph_n_el)//2} protons (or vice versa). "
+                            "Verify mechanism against CV redox data.")
+                elif abs(_mn_round - 2.0) < 0.2:
+                    st.info(f"ℹ️ m/n ≈ 2 — twice as many protons as electrons transferred. "
+                            "Uncommon; verify experimental pH range excludes buffer interference.")
+                else:
+                    st.warning(f"⚠️ m/n = {_mn:.3f} — non-integer ratio. "
+                               "This may indicate a complex multi-step mechanism, pH range outside "
+                               "linearity, or buffer-electrode interaction. Review raw Ep vs pH plot.")
                 _ph_notes = _analysis_notes_widget("ph")
                 _save_analysis("ph",metrics,out, notes=_ph_notes)
                 _metrics_csv_btn(metrics, "ph_metrics.csv")
@@ -2924,15 +2945,57 @@ elif page == "➕  Standard Addition":
                                        analyte_name=sa_analyte,output_dir=out,
                                        plot_style=st.session_state.get("plot_style"))
                 st.success("✅ Done — results saved to project")
+                _sa_slope = res.get("slope", 0)
                 metrics={
                     f"C_sample ({sa_cu})": f"{res.get('C_sample_uM',0):.4f}",
                     "R²":   f"{res.get('R2',0):.5f}",
-                    "Slope":f"{res.get('slope',0):.4f} µA/{sa_cu}",
+                    "Slope":f"{_sa_slope:.4f} µA/{sa_cu}",
                 }
                 m1,m2,m3=st.columns(3)
                 m1.metric(f"C_sample ({sa_cu})",metrics[f"C_sample ({sa_cu})"])
                 m2.metric("R²",metrics["R²"])
                 m3.metric("Slope",metrics["Slope"])
+
+                # ── Matrix effect: compare SA slope vs calibration slope ───
+                _cal_metrics = _cur().get("analyses", {}).get("cal", {}).get("metrics", {})
+                _cal_slope_str = str(_cal_metrics.get("Slope", ""))
+                try:
+                    # Parse "X.XXXX µA/µM" or plain number
+                    _cal_slope_val = float(_cal_slope_str.split()[0])
+                except (ValueError, IndexError):
+                    _cal_slope_val = None
+
+                # Also try DPV calibration
+                if _cal_slope_val is None:
+                    _dpv_metrics = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
+                    _dpv_slope_str = str(_dpv_metrics.get("Slope", ""))
+                    try:
+                        _cal_slope_val = float(_dpv_slope_str.split()[0])
+                    except (ValueError, IndexError):
+                        _cal_slope_val = None
+
+                if _cal_slope_val and abs(_cal_slope_val) > 0:
+                    _me_pct = (_sa_slope / _cal_slope_val - 1) * 100
+                    _me_abs = abs(_me_pct)
+                    _me_color = "✅" if _me_abs <= 10 else "⚠️"
+                    _me_interp = ("negligible — no significant matrix effect" if _me_abs <= 5
+                                  else "moderate — consider matrix-matched calibration" if _me_abs <= 15
+                                  else "significant — matrix effect present; use standard addition or matrix-matched standards")
+                    st.markdown('<div class="sec">Matrix Effect Assessment</div>', unsafe_allow_html=True)
+                    _me1, _me2, _me3 = st.columns(3)
+                    _me1.metric("Calibration slope", f"{_cal_slope_val:.4f}")
+                    _me2.metric("SA slope", f"{_sa_slope:.4f}")
+                    _me3.metric("Matrix effect", f"{_me_pct:+.1f}%", delta=f"{_me_color} {_me_interp.split('—')[0].strip()}")
+                    if _me_abs > 10:
+                        st.warning(f"⚠️ Matrix effect = {_me_pct:+.1f}% — {_me_interp}.")
+                    else:
+                        st.success(f"✅ Matrix effect = {_me_pct:+.1f}% — {_me_interp}.")
+                    metrics["Calibration slope"] = f"{_cal_slope_val:.4f}"
+                    metrics["SA slope"] = f"{_sa_slope:.4f}"
+                    metrics["Matrix effect (%)"] = f"{_me_pct:+.1f}%"
+                    metrics["Matrix effect verdict"] = _me_interp.split("—")[0].strip()
+                else:
+                    st.info("💡 Run Calibration or DPV Calibration first to enable matrix effect comparison (SA slope vs calibration slope).")
                 _sa_notes = _analysis_notes_widget("sa")
                 _save_analysis("sa",metrics,out, notes=_sa_notes)
                 _metrics_csv_btn(metrics, "standard_addition_metrics.csv")
@@ -3226,6 +3289,35 @@ elif page == "📅  Stability":
             st.success(f"✅ Day {_sr2[-1]['Day']}: % recovery = {_last_rec:.1f}% — criterion met (≥{_thresh2:.0f}%)")
         else:
             st.warning(f"⚠️ Day {_sr2[-1]['Day']}: % recovery = {_last_rec:.1f}% — criterion not met (<{_thresh2:.0f}%)")
+
+        # ── Linear trend test (signal drift significance) ───────────
+        from scipy.stats import linregress as _lr_stab
+        _stab_days_arr2  = [r["Day"]           for r in _sr2]
+        _stab_sigs_arr2  = [r["Signal (µA)"]   for r in _sr2]
+        _stab_lr = _lr_stab(_stab_days_arr2, _stab_sigs_arr2)
+        _stab_slope_per_day = _stab_lr.slope
+        _stab_p = _stab_lr.pvalue
+        _stab_r2 = _stab_lr.rvalue ** 2
+        _drift_pct_total = (_stab_slope_per_day * (_stab_days_arr2[-1] - _stab_days_arr2[0])
+                            / _stab_sigs_arr2[0] * 100) if _stab_sigs_arr2[0] else 0
+
+        st.markdown("**Signal Drift Analysis**")
+        _sd1, _sd2, _sd3 = st.columns(3)
+        _sd1.metric("Drift slope", f"{_stab_slope_per_day:.4f} µA/day")
+        _sd2.metric("Total drift", f"{_drift_pct_total:+.1f}%")
+        _sd3.metric("Trend p-value", f"{_stab_p:.4f}")
+
+        if _stab_p < 0.05:
+            if _stab_slope_per_day < 0:
+                st.warning(f"⚠️ Statistically significant signal decline detected (slope = {_stab_slope_per_day:.4f} µA/day, p = {_stab_p:.4f}). "
+                           f"This represents a {abs(_drift_pct_total):.1f}% total drop over the study period. "
+                           "Report storage conditions and consider correcting for drift in long-term measurements.")
+            else:
+                st.info(f"ℹ️ Statistically significant positive drift detected (p = {_stab_p:.4f}). "
+                        "This may indicate electrode conditioning or analyte accumulation.")
+        else:
+            st.success(f"✅ No statistically significant signal drift (p = {_stab_p:.4f} ≥ 0.05). "
+                       "Signal is stable over the monitoring period.")
 
         import matplotlib.pyplot as plt
         import io as _io_stab
@@ -3817,6 +3909,40 @@ elif page == "⚡  DPV — Sensor Calibration":
                 st.markdown(f"- Sensitivity: **{abs(_slope):.4f} µA/{_dpv_unit}**")
                 st.caption("Add electrode area or run CV first for normalised sensitivity.")
 
+        # ── Mandel linearity test (Lack-of-Fit F-test) ──────
+        if len(_x) >= 5:
+            # Fit quadratic
+            _p2 = np.polyfit(_x, _y, 2)
+            _y_lin  = _slope * _x + _intercept
+            _y_quad = np.polyval(_p2, _x)
+            _rss_lin  = float(np.sum((_y - _y_lin)  ** 2))
+            _rss_quad = float(np.sum((_y - _y_quad) ** 2))
+            _n_pts = len(_x)
+            # F = (RSS_lin - RSS_quad) / 1  /  (RSS_quad / (n-3))
+            if _rss_quad > 0 and _n_pts > 3:
+                _F_mandel = (_rss_lin - _rss_quad) / 1.0 / (_rss_quad / (_n_pts - 3))
+                from scipy.stats import f as _f_dist
+                _p_mandel = 1 - _f_dist.cdf(_F_mandel, 1, _n_pts - 3)
+                st.markdown("**Mandel Linearity Test (Lack-of-Fit F-test)**")
+                _ml1, _ml2, _ml3 = st.columns(3)
+                _ml1.metric("F statistic", f"{_F_mandel:.3f}")
+                _ml2.metric("p-value", f"{_p_mandel:.4f}")
+                _ml3.metric("Linearity", "✅ Confirmed" if _p_mandel >= 0.05 else "⚠️ Rejected")
+                if _p_mandel < 0.05:
+                    st.warning(f"⚠️ Mandel test: F = {_F_mandel:.3f}, p = {_p_mandel:.4f} < 0.05 — "
+                               "the quadratic term significantly improves the fit. Consider narrowing the "
+                               "linear range or reporting a quadratic calibration equation.")
+                else:
+                    st.success(f"✅ Mandel test: F = {_F_mandel:.3f}, p = {_p_mandel:.4f} ≥ 0.05 — "
+                               "linear model is adequate over the stated concentration range.")
+                # Store for metrics
+                _mandel_verdict = "confirmed" if _p_mandel >= 0.05 else "rejected"
+            else:
+                _F_mandel, _p_mandel, _mandel_verdict = None, None, "not tested"
+        else:
+            st.caption("💡 Mandel linearity test requires ≥ 5 calibration points.")
+            _F_mandel, _p_mandel, _mandel_verdict = None, None, "not tested (< 5 pts)"
+
         # Save to project
         _dpv_metrics = {
             "analyte":        _dpv_analyte,
@@ -3833,6 +3959,10 @@ elif page == "⚡  DPV — Sensor Calibration":
         }
         if _sensitivity_per_cm2:
             _dpv_metrics["sensitivity_norm"] = round(_sensitivity_per_cm2, 6)
+        if _F_mandel is not None:
+            _dpv_metrics["Mandel F"] = round(_F_mandel, 4)
+            _dpv_metrics["Mandel p"] = round(_p_mandel, 4)
+            _dpv_metrics["Linearity"] = _mandel_verdict
 
         _save_analysis("dpv", _dpv_metrics, None)
 
@@ -4301,7 +4431,9 @@ elif page == "📄  Report":
     # ── Durum tablosu ────────────────────────────────────────
     _mod_labels = {"cv":"📈 CV","eis":"🔵 EIS","ph":"🧪 pH",
                    "cal":"📊 Calibration","sa":"➕ Std Addition",
-                   "sel":"🧬 Selectivity","stab":"📅 Stability","surf":"🔬 Surface Charact."}
+                   "sel":"🧬 Selectivity","stab":"📅 Stability","surf":"🔬 Surface Charact.",
+                   "dpv":"⚡ DPV Calibration","dpvopt":"🔧 DPV Optimization",
+                   "realsample":"🧫 Real Sample","litcomp":"📚 Literature"}
     st.markdown("**Analyses ready for report:**")
     _missing_interp = []
     for k, a in analyses.items():
@@ -4388,6 +4520,14 @@ elif page == "📄  Report":
                                    lambda a: {"metrics": a.get("metrics",{}),
                                                "electrode_name": st.session_state.get("surf_electrode",
                                                    proj.get("name","modified electrode"))}),
+            "dpv":(interpret_dpv_calibration,
+                                   lambda a: {"metrics": a.get("metrics",{})}),
+            "dpvopt":(interpret_dpv_optimization,
+                                   lambda a: {"metrics": a.get("metrics",{})}),
+            "realsample":(interpret_real_sample,
+                                   lambda a: {"metrics": a.get("metrics",{})}),
+            "litcomp":(interpret_literature_comparison,
+                                   lambda a: {"metrics": a.get("metrics",{})}),
         }
 
         def _run_interp(key, fn, kwargs):
@@ -4596,6 +4736,39 @@ elif page == "📄  Report":
                         "plot_bytes":  st.session_state.get("stab_plot_bytes", []),
                         "interpretation": st.session_state.get("stab_interp",""),
                     }
+
+                # DPV Calibration
+                _dpv_saved = _cur().get("analyses", {}).get("dpv", {})
+                if _dpv_saved:
+                    _proj_for_report["analyses"]["dpv"] = _dpv_saved
+
+                # DPV Optimization
+                _dpvopt_saved = _cur().get("analyses", {}).get("dpvopt", {})
+                if _dpvopt_saved:
+                    _proj_for_report["analyses"]["dpvopt"] = _dpvopt_saved
+
+                # Real Sample Analysis
+                _rs_saved = _cur().get("analyses", {}).get("realsample", {})
+                if not _rs_saved and "rs_results" in st.session_state and st.session_state["rs_results"]:
+                    _rsr = st.session_state["rs_results"]
+                    _rs_saved = {
+                        "metrics": {
+                            "Analyte":          st.session_state.get("rs_analyte", "—"),
+                            "Matrix":           st.session_state.get("rs_matrix", "—"),
+                            "Samples tested":   len(_rsr),
+                            "Mean recovery":    f"{sum(r.get('Recovery (%)', 0) for r in _rsr)/len(_rsr):.1f}%" if _rsr else "—",
+                        },
+                        "rows": _rsr,
+                        "plot_bytes": st.session_state.get("rs_plot_bytes", []),
+                        "interpretation": st.session_state.get("rs_interp", ""),
+                    }
+                if _rs_saved:
+                    _proj_for_report["analyses"]["realsample"] = _rs_saved
+
+                # Literature Comparison
+                _lit_saved = _cur().get("analyses", {}).get("litcomp", {})
+                if _lit_saved:
+                    _proj_for_report["analyses"]["litcomp"] = _lit_saved
 
                 # Surface Characterization
                 _surf_metrics = {}
