@@ -6,35 +6,151 @@ commentary on analysis results from each module.
 
 from __future__ import annotations
 import json
+import random
 
 
 # ─────────────────────────────────────────────────────────────
-# SYSTEM PROMPT  (shared across all modules)
+# WRITING STYLE VARIANTS  (picked randomly each call)
 # ─────────────────────────────────────────────────────────────
-_SYSTEM = """You are a senior electrochemist with expertise in
+_STYLE_VARIANTS = [
+    {
+        "name": "terse-quantitative",
+        "addon": (
+            "Write in a terse, data-dense style. Sentences are short and declarative. "
+            "Lead with the most striking numerical result. Compress every argument. "
+            "Do NOT start with 'The' or 'In this study'. Start with a data point or a direct claim."
+        ),
+        "frame": (
+            "Report the most critical values first, then explain their significance. "
+            "Skip preamble. Each paragraph should open with a number."
+        ),
+    },
+    {
+        "name": "narrative-mechanistic",
+        "addon": (
+            "Weave the data into a mechanistic story. Explain WHY each result occurs, "
+            "not just what it is. Connect electrode design logic to analytical outcome. "
+            "Let cause and effect drive the paragraph structure."
+        ),
+        "frame": (
+            "Tell the story of what these data reveal about the electrode interface. "
+            "Lead with mechanism, follow with numbers, conclude with what this enables."
+        ),
+    },
+    {
+        "name": "comparative-critical",
+        "addon": (
+            "Ground every claim in comparison — Nernst theory, literature benchmarks, or prior art. "
+            "Use precise comparative language: 'superior to', 'consistent with', 'falls short of', "
+            "'notably lower than'. Be willing to flag weaknesses alongside strengths."
+        ),
+        "frame": (
+            "Frame each result against an external benchmark. The final paragraph must "
+            "explicitly situate this sensor's performance relative to the state of the art."
+        ),
+    },
+    {
+        "name": "concise-nature-letter",
+        "addon": (
+            "Write in compressed Nature or Angewandte Chemie letter style. "
+            "Every sentence carries new information. No hedging, no throat-clearing, no repetition. "
+            "Pack more data into fewer words. Sentences may be long if they carry multiple claims."
+        ),
+        "frame": (
+            "Open mid-argument, as if continuing a discussion already in progress. "
+            "Do not restate the method — interpret it."
+        ),
+    },
+    {
+        "name": "contextual-applied",
+        "addon": (
+            "Emphasise real-world significance throughout. Connect every analytical figure-of-merit "
+            "to a practical context — clinical threshold, environmental regulation, pharmacopoeia limit, "
+            "or typical in-vivo concentration. The reader should understand not just what the number is "
+            "but why it matters."
+        ),
+        "frame": (
+            "Open with the clinical or environmental problem, develop through the data that solve it, "
+            "close with what this sensor can realistically be deployed for."
+        ),
+    },
+]
+
+# ─────────────────────────────────────────────────────────────
+# FULL-PROJECT PARAGRAPH STRUCTURES  (rotated randomly)
+# ─────────────────────────────────────────────────────────────
+_FULL_PROJECT_STRUCTURES = [
+    # A — Classic: rationale → characterisation → analytical
+    """\
+Paragraph 1 — Electrode design rationale (2–3 sentences):
+  State the analytical challenge, the modification strategy, and the mechanistic reasoning behind it.
+Paragraph 2 — Electrochemical characterisation (3–4 sentences):
+  Report Rct changes from EIS (exact Ω values), ECSA and b-value from CV, pH slope vs Nernst theory.
+  Interpret what each number reveals about the electrode interface.
+Paragraph 3 — Analytical performance and applicability (2–3 sentences):
+  State LOD, LOQ, linear range, sensitivity. Compare to a literature benchmark.
+  Close with a one-sentence take-away on where this sensor can be deployed.""",
+
+    # B — Lead with the headline number
+    """\
+Paragraph 1 — Headline analytical achievement (2–3 sentences):
+  Open with LOD and linear range as the top result. Put the sensor's performance in immediate context —
+  compare to a clinical threshold or typical literature value.
+Paragraph 2 — Why it works: electrode design and interface characterisation (3–4 sentences):
+  Explain what makes the LOD possible. Report Rct reduction (exact Ω), ECSA increase, b-value,
+  and pH slope — each tied mechanistically to the design choice that produced it.
+Paragraph 3 — Validation and outlook (2 sentences):
+  Address real-sample recovery, selectivity margin, and the practical scenario where this sensor
+  provides analytical value.""",
+
+    # C — Problem-to-solution narrative
+    """\
+Paragraph 1 — The sensing problem (2 sentences):
+  State why detecting the target analyte is analytically difficult and what conventional methods
+  fail to deliver at this concentration or in this matrix.
+Paragraph 2 — The engineered solution and its electrochemical validation (3–4 sentences):
+  Describe the electrode architecture. Show that EIS (Rct), CV (b, ECSA), and pH data confirm
+  the design works as intended — each result as evidence for the design hypothesis.
+Paragraph 3 — Performance, comparison, and deployment (3 sentences):
+  Report the figures of merit, compare to recent literature sensors for the same analyte,
+  and state what this sensor can realistically be used for.""",
+]
+
+
+# ─────────────────────────────────────────────────────────────
+# SYSTEM PROMPT  (base — style addon appended per call)
+# ─────────────────────────────────────────────────────────────
+_SYSTEM_BASE = """You are a senior electrochemist with expertise in
 modified electrode design, electrocatalysis, and electroanalytical
-chemistry. You interpret experimental results concisely, in the
-style of a peer-reviewed analytical chemistry paper (Analytical
-Chemistry, Biosensors & Bioelectronics, Electrochimica Acta).
+chemistry. You interpret experimental results in the style of a
+peer-reviewed analytical chemistry paper (Analytical Chemistry,
+Biosensors & Bioelectronics, Electrochimica Acta).
 
-Rules:
-- Write in fluent English, 2–5 short paragraphs.
+Rules (always apply):
 - Quote numeric values exactly as given; use correct SI units.
-- Comment on data quality, compare to literature benchmarks
-  where relevant, and flag any anomalies worth investigating.
-- End with one sentence summarising the key take-away.
 - Do NOT use bullet points or headers inside your commentary.
-- Do NOT start with "Certainly" or any affirmation phrase.
+- Do NOT start with "Certainly", "Great", or any affirmation phrase.
 - CRITICAL — formatting: Do NOT use LaTeX math notation ($...$, \\mu, \\text, _{}, ^{}).
   Instead use plain Unicode symbols directly: Ω, µA, µM, cm², s⁻¹, °C, etc.
   Write variable names in plain text: Rct, Ipa, k0, ECSA, E1/2, ΔEp."""
+
+# Keep the old name as alias for backward compat
+_SYSTEM = _SYSTEM_BASE
+
+
+def _pick_style() -> dict:
+    """Her çağrıda rastgele bir yazım stili seç."""
+    return random.choice(_STYLE_VARIANTS)
 
 
 # ─────────────────────────────────────────────────────────────
 # INTERNAL HELPER
 # ─────────────────────────────────────────────────────────────
-def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
-    """Call Claude via the Anthropic SDK; returns plain text."""
+def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5",
+          extra_system: str = "") -> str:
+    """Call Claude via the Anthropic SDK; returns plain text.
+    extra_system: style/tone addon appended to _SYSTEM_BASE per call.
+    """
     try:
         import anthropic
     except ImportError:
@@ -48,7 +164,10 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
         "claude-3-5-sonnet-20241022",
     ]
 
-    # Let the SDK manage its own http client (avoids httpx vs httpx2 version conflicts)
+    system_prompt = _SYSTEM_BASE
+    if extra_system:
+        system_prompt = _SYSTEM_BASE + "\n\nWriting style for THIS response:\n" + extra_system
+
     client = anthropic.Anthropic(api_key=api_key)
 
     last_err = None
@@ -56,8 +175,8 @@ def _call(api_key: str, user_msg: str, model: str = "claude-opus-5-5") -> str:
         try:
             msg = client.messages.create(
                 model      = _m,
-                max_tokens = 4096,   # large enough for thinking + text
-                system     = _SYSTEM,
+                max_tokens = 4096,
+                system     = system_prompt,
                 messages   = [{"role": "user", "content": user_msg}],
             )
 
@@ -99,6 +218,7 @@ def interpret_cv(api_key: str, results: dict, electrode_name: str = "electrode",
     k0_mean = k0.get("mean",        None)
     k0_str  = f"{k0_mean:.3e} cm s⁻¹" if k0_mean else "not calculated"
 
+    _style = _pick_style()
     prompt = f"""Interpret the following cyclic voltammetry scan-rate study results for
 the electrode: {electrode_name}.
 
@@ -106,13 +226,12 @@ ECSA (Randles-Ševčík): {ecsa_v} cm² (R² = {r2_ecsa})
 Current–scan-rate mechanism (log ip vs log ν slope b): {b}  → classified as: {mech_lbl}
 Apparent heterogeneous rate constant k° (Nicholson method): {k0_str}
 
-Discuss:
-1. The quality of the ECSA estimate and what it implies about active surface area.
-2. What the b-value reveals about the rate-limiting step (diffusion vs. surface-confined process).
-3. The significance of the k° value and what it says about electron-transfer kinetics.
-4. Any recommendations for optimising the electrode or the measurement protocol."""
+Framing guidance: {_style['frame']}
+Cover: active surface area (ECSA), rate-limiting step (b-value), electron-transfer kinetics (k°),
+and any anomaly or optimisation recommendation implied by these numbers.
+Write 2–4 paragraphs."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = None, model: str = "claude-opus-5-5") -> str:
@@ -126,38 +245,21 @@ def interpret_eis(api_key: str, param_df, electrode_labels: list[str] | None = N
 
     labels_str = ", ".join(electrode_labels) if electrode_labels else "not specified"
 
-    prompt = f"""You are interpreting electrochemical impedance spectroscopy (EIS) data
-for a manuscript targeting Analytical Chemistry, Biosensors & Bioelectronics,
-or Electrochimica Acta.
+    _style = _pick_style()
+    prompt = f"""Interpret the following EIS data for a manuscript targeting
+Analytical Chemistry, Biosensors & Bioelectronics, or Electrochimica Acta.
 
 Electrode series (in order): {labels_str}
 Randles-CPE circuit fitting results:
 
 {tbl}
 
-Write 3–4 paragraphs of expert commentary covering:
+Framing guidance: {_style['frame']}
+Ensure you address: Rs stability, Rct trend across the series with exact Ω values and
+mechanistic explanation for each step, CPE parameters (n interpretation, C_eff changes),
+and circuit-model adequacy. Quote every numeric value. Write 3–4 paragraphs."""
 
-1. Rs (solution resistance, Ω): confirm stability across electrodes —
-   any significant change indicates measurement artefacts or ionic-strength effects.
-
-2. Rct (charge-transfer resistance, Ω): describe the TREND across the series
-   with exact values. Explain mechanistically whether each modification step
-   increased or decreased Rct and why (surface blocking, electrocatalysis,
-   faster electron-transfer kinetics, analyte adsorption, etc.).
-   Compare Rct values to typical literature ranges for similar systems.
-
-3. CPE parameters (Q and n): interpret n — if n < 0.85 this suggests significant
-   surface roughness or inhomogeneity; if n ≈ 1 the interface is near-ideal
-   capacitive. Discuss C_eff (effective capacitance) and what changes in
-   double-layer capacitance reveal about surface area modification.
-
-4. Fit quality (χ² or residuals if present): state whether the Randles-CPE
-   model is adequate or whether a more complex circuit (Warburg, nested RC)
-   should be considered.
-
-Quote every numeric value. Use correct SI notation. Do NOT use bullet points."""
-
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_ph(api_key: str, results: dict, analyte: str = "analyte", model: str = "claude-opus-5-5") -> str:
@@ -166,22 +268,19 @@ def interpret_ph(api_key: str, results: dict, analyte: str = "analyte", model: s
     mn       = results.get("ratio_m_n",       "N/A")
     opt_pH   = results.get("optimal_pH",      "N/A")
 
+    _style = _pick_style()
     prompt = f"""Interpret the following pH-dependent electrochemical study for {analyte}.
 
 Peak potential (Ep) vs pH slope: {slope} mV pH⁻¹  (R² = {r2})
 Nernst-predicted slope for m/n = {mn}: {-59.2 * float(mn) if isinstance(mn, (int,float)) else 'see ratio'}  mV pH⁻¹
 Optimal working pH identified: {opt_pH}
 
-Discuss:
-1. Whether the observed slope is consistent with Nernstian behaviour
-   and what the m/n ratio implies about the proton–electron stoichiometry.
-2. The mechanistic significance of the pH dependence
-   (e.g. PCET, pH-sensitive equilibrium prior to electron transfer).
-3. The choice of optimal pH and its relevance for practical sensing
-   (physiological fluids, real-sample compatibility).
-4. Any buffer or ionic-strength considerations the analyst should bear in mind."""
+Framing guidance: {_style['frame']}
+Cover: Nernstian consistency and what m/n implies, the mechanistic picture
+(PCET vs prior equilibrium), practical relevance of the optimal pH, and
+any ionic-strength or buffer considerations. Write 2–3 paragraphs."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_calibration(api_key: str, results: dict,
@@ -281,6 +380,7 @@ Use precise numerical values from the data above. Use passive voice and present 
         return _call(api_key, prompt, model)
 
     # ── Calibration-only interpretation (original behaviour) ─────────────
+    _style = _pick_style()
     prompt = f"""Interpret the following analytical calibration results for {analyte}
 obtained with an electrochemical sensor.
 
@@ -290,17 +390,15 @@ LOD (3σ/m, IUPAC): {lod} {unit}
 LOQ (10σ/m, IUPAC): {loq} {unit}
 Linear dynamic range: {lr[0]} – {lr[1]} {unit}
 
-Discuss:
-1. Linearity quality and whether r meets the typical ≥ 0.9990 criterion
-   for analytical sensor publications.
-2. The LOD/LOQ values in the context of physiological or environmental
-   relevance (compare to known literature values if possible).
-3. The sensitivity (slope) and what it implies about electrocatalytic
-   activity toward {analyte}.
-4. Recommendations for real-sample applicability and any matrix effects
-   to anticipate."""
+Framing guidance: {_style['frame']}
+Discuss in 2–3 paragraphs:
+- Linearity quality and whether r meets the typical ≥ 0.9990 criterion for analytical sensor publications.
+- The LOD/LOQ values in the context of physiological or environmental relevance (compare to known
+  literature values if possible).
+- The sensitivity (slope) and what it implies about electrocatalytic activity toward {analyte}.
+- Recommendations for real-sample applicability and any matrix effects to anticipate."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_standard_addition(api_key: str, results: dict,
@@ -309,22 +407,24 @@ def interpret_standard_addition(api_key: str, results: dict,
     r2     = results.get("R2",          "N/A")
     slope  = results.get("slope",       "N/A")
 
+    _style = _pick_style()
     prompt = f"""Interpret the following standard addition result for {analyte}
 in a real sample, measured by electrochemical detection.
 
 Calculated sample concentration: {c_samp} {unit}
 Regression slope: {slope} µA {unit}⁻¹  (R² = {r2})
 
-Discuss:
-1. The reliability of the standard addition result, judging from R²
-   and whether the slope is consistent with the calibration sensitivity.
-2. How standard addition compensates for matrix effects compared to
-   external calibration, and whether the R² achieved here is sufficient.
-3. Any concern about spike recovery, dilution linearity, or species
-   speciation that should be verified before reporting the result.
-4. Confidence in the reported concentration and suggested follow-up validation."""
+Framing guidance: {_style['frame']}
+Discuss in 2–3 paragraphs:
+- The reliability of the standard addition result, judging from R² and whether the slope is
+  consistent with the calibration sensitivity.
+- How standard addition compensates for matrix effects compared to external calibration, and
+  whether the R² achieved here is sufficient.
+- Any concern about spike recovery, dilution linearity, or species speciation that should be
+  verified before reporting the result.
+- Confidence in the reported concentration and suggested follow-up validation."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_selectivity(api_key: str, results: list, analyte: str = "analyte",
@@ -342,22 +442,24 @@ def interpret_selectivity(api_key: str, results: list, analyte: str = "analyte",
         f"status = {r.get('Status','?')}"
         for r in results
     )
+    _style = _pick_style()
     prompt = f"""Interpret the following selectivity study for the electrochemical detection of {analyte}.
 Interference threshold: ±{threshold_pct:.0f}% signal change.
 
 Results ({n_pass}/{n_total} passed):
 {rows_txt}
 
-Discuss:
-1. The overall selectivity profile — which interferents posed the greatest challenge and why,
-   based on expected redox potentials or non-specific binding mechanisms.
-2. Whether the {threshold_pct:.0f}% threshold is appropriate for the intended application
-   (clinical, environmental, or food analysis) and how it compares to ICH or AOAC criteria.
-3. If any interferents failed, propose practical mitigation strategies (potential selection,
-   masking agents, sample pre-treatment, or modified electrode chemistry).
-4. The practical significance: can the sensor be deployed in real matrices such as serum,
-   urine, or food extracts without prior removal of the failing interferents?"""
-    return _call(api_key, prompt, model)
+Framing guidance: {_style['frame']}
+Discuss in 2–3 paragraphs:
+- The overall selectivity profile — which interferents posed the greatest challenge and why,
+  based on expected redox potentials or non-specific binding mechanisms.
+- Whether the {threshold_pct:.0f}% threshold is appropriate for the intended application
+  (clinical, environmental, or food analysis) and how it compares to ICH or AOAC criteria.
+- If any interferents failed, propose practical mitigation strategies (potential selection,
+  masking agents, sample pre-treatment, or modified electrode chemistry).
+- The practical significance: can the sensor be deployed in real matrices such as serum,
+  urine, or food extracts without prior removal of the failing interferents?"""
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_stability(api_key: str, results: list, analyte: str = "analyte",
@@ -375,6 +477,7 @@ def interpret_stability(api_key: str, results: list, analyte: str = "analyte",
         f"  Day {r.get('Day','?')}: {r.get('% Recovery','?')}% recovery — {r.get('Status','?')}"
         for r in results
     )
+    _style = _pick_style()
     prompt = f"""Interpret the following storage stability study for an electrochemical sensor
 detecting {analyte}. The minimum acceptable recovery threshold is {threshold_pct:.0f}%.
 
@@ -383,15 +486,16 @@ Day-by-day recovery data:
 
 Summary: {len(valid)} time points, final recovery = {last_rec}% at day {last_day}, {n_fail} time point(s) below threshold.
 
-Discuss:
-1. The stability profile — characterise the degradation trend (linear, exponential, plateau)
-   and identify the inflection point where performance begins to degrade meaningfully.
-2. The estimated shelf-life based on the threshold, and how this compares to practical
-   requirements for electrochemical sensors reported in the literature (typically 2–8 weeks).
-3. Likely degradation mechanisms for the electrode modification (leaching of nanomaterials,
-   oxidation of mediators, biofouling, electrolyte ingress) based on the observed trend.
-4. Recommended storage conditions or electrode stabilisation strategies to extend shelf-life."""
-    return _call(api_key, prompt, model)
+Framing guidance: {_style['frame']}
+Discuss in 2–3 paragraphs:
+- The stability profile — characterise the degradation trend (linear, exponential, plateau)
+  and identify the inflection point where performance begins to degrade meaningfully.
+- The estimated shelf-life based on the threshold, and how this compares to practical
+  requirements for electrochemical sensors reported in the literature (typically 2–8 weeks).
+- Likely degradation mechanisms for the electrode modification (leaching of nanomaterials,
+  oxidation of mediators, biofouling, electrolyte ingress) based on the observed trend.
+- Recommended storage conditions or electrode stabilisation strategies to extend shelf-life."""
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_surface(api_key: str, metrics: dict, electrode_name: str = "modified electrode",
@@ -415,6 +519,7 @@ def interpret_surface(api_key: str, metrics: dict, electrode_name: str = "modifi
             "Carefully examine the morphology of each image provided.\n"
         )
 
+    _style = _pick_style()
     prompt = f"""Interpret the following surface characterization data for {electrode_name}
 compared to bare GCE, obtained by EIS (Nyquist), CV in a redox probe solution, and SEM imaging.
 {_sem_preamble}
@@ -429,23 +534,22 @@ CV results (peak anodic current, ip,a):
   Signal enhancement: {enhance}
 {f"SEM observation: {sem_note}" if sem_note else ""}
 
-Discuss the following points thoroughly:
-1. What the change in Rct reveals about the electron-transfer kinetics after surface modification —
-   whether the modification facilitates or hinders charge transfer and why.
-2. The correlation between the EIS Rct change and the CV current enhancement, and whether
-   they are consistent with the proposed modification mechanism.
-3. How these surface characterization results support the electrode's suitability for
-   electrocatalytic sensing of the target analyte.
-4. Any anomalies (e.g. Rct increase combined with current enhancement, or vice versa)
-   that warrant further investigation.{'''
-5. SEM/FESEM morphological analysis: Describe in detail the surface morphology visible in the
-   attached images. Comment on particle size, distribution, porosity, aggregation, surface
-   roughness, and any structural features (nanosheets, nanoparticles, flower-like structures, etc.).
-   Compare the bare and modified electrode morphologies if both images are present.
-   Explain how the observed morphology explains or supports the electrochemical findings (Rct
-   reduction, current enhancement). Discuss how the nanostructure may contribute to the
-   increased electroactive surface area and improved electrocatalytic performance.''' if _has_sem else ''}"""
-    return _call(api_key, prompt, model)
+Framing guidance: {_style['frame']}
+Discuss thoroughly in 3–4 paragraphs:
+- What the change in Rct reveals about electron-transfer kinetics after surface modification —
+  whether the modification facilitates or hinders charge transfer and why.
+- The correlation between the EIS Rct change and the CV current enhancement, and whether
+  they are consistent with the proposed modification mechanism.
+- How these surface characterization results support the electrode's suitability for
+  electrocatalytic sensing of the target analyte.
+- Any anomalies (e.g. Rct increase combined with current enhancement, or vice versa)
+  that warrant further investigation.{'''
+- SEM/FESEM morphological analysis: Describe the surface morphology in detail — particle size,
+  distribution, porosity, aggregation, roughness, and structural features (nanosheets,
+  nanoparticles, flower-like structures). Compare bare and modified morphologies if both images
+  are present. Explain how the morphology supports the electrochemical findings and how the
+  nanostructure may contribute to increased ECSA and improved electrocatalytic performance.''' if _has_sem else ''}"""
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 def interpret_full_project(api_key: str, project: dict, model: str = "claude-opus-5-5") -> str:
@@ -554,6 +658,10 @@ def interpret_full_project(api_key: str, project: dict, model: str = "claude-opu
     interp_section = ("\n\n".join(interp_block)
                       if interp_block else "")
 
+    _style  = _pick_style()
+    _struct = random.choice(_FULL_PROJECT_STRUCTURES)
+    _wcount = random.choice(["190–230", "220–260", "240–290"])
+
     prompt = f"""You are writing the Abstract and Discussion Summary for a manuscript
 about the electrochemical sensor study titled "{proj_name}".
 
@@ -561,31 +669,20 @@ Quantitative experimental results:
 {summary_block}
 {"" if not interp_section else chr(10) + "Per-module AI interpretations (summaries):" + chr(10) + interp_section}
 
-Write exactly 3 paragraphs in the style required by Biosensors & Bioelectronics
-or Analytical Chemistry:
+Write exactly 3 paragraphs following this structure:
 
-Paragraph 1 — Motivation and electrode design strategy (2–3 sentences):
-  State the analytical problem addressed, the electrode material/modification
-  approach, and why this system was chosen.
-
-Paragraph 2 — Key electrochemical characterisation findings (3–4 sentences):
-  Report the most important numbers: Rct changes from EIS (cite exact Ω values),
-  ECSA and b-value from CV, pH dependence slope vs Nernst theory.
-  Use precise SI units throughout.{"" if not interp_section else " Incorporate insights from the per-module interpretations where they add nuance."}
-
-Paragraph 3 — Analytical performance and practical relevance (2–3 sentences):
-  State LOD, LOQ, linear dynamic range, and sensitivity.
-  Compare to at least one literature benchmark if the data suggest it.
-  End with the key take-away sentence about applicability (real samples, clinical or
-  environmental significance).
+{_struct}
 
 RULES:
 - Do NOT use bullet points or headers.
 - Quote every numeric value present in the data above.
 - If a value is missing, omit that parameter rather than saying "data not provided".
-- Total length: {"220–280" if interp_section else "180–220"} words."""
+{"- Incorporate insights from the per-module interpretations where they add nuance." if interp_section else ""}
+- Total length: {_wcount} words.
 
-    return _call(api_key, prompt, model)
+Framing guidance: {_style['frame']}"""
+
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -610,8 +707,9 @@ def interpret_dpv_calibration(api_key: str, metrics: dict,
     n         = metrics.get("n_points", "N/A")
     window    = metrics.get("peak_window_V", "N/A")
 
-    prompt = f"""Interpret the following DPV (differential pulse voltammetry) calibration data
-for the electrochemical detection of {analyte} at a modified electrode.
+    _style = _pick_style()
+    prompt = f"""Interpret the following DPV calibration data for the electrochemical
+detection of {analyte} at a modified electrode.
 
 Calibration parameters:
   Number of calibration points: {n}
@@ -620,24 +718,16 @@ Calibration parameters:
   Slope (sensitivity): {slope} µA/{unit}
 {f"  Normalised sensitivity: {sens_norm} µA/{unit}·cm²" if sens_norm else ""}
   Intercept: {intercept} µA
-  Coefficient of determination (R²): {r2}
-  Limit of Detection (3σ/m): {lod} {unit}
-  Limit of Quantification (10σ/m): {loq} {unit}
+  R²: {r2}
+  LOD (3σ/m): {lod} {unit}
+  LOQ (10σ/m): {loq} {unit}
 
-Discuss the following:
-1. The linearity and quality of the calibration curve: comment on R², the slope, and
-   whether the linear range covers practically relevant concentration levels for the target analyte.
-2. The analytical figures of merit: evaluate LOD and LOQ in the context of real-sample applications
-   (clinical, environmental, food safety) and compare to typical literature benchmarks for this class
-   of analyte and electrode.
-3. The sensitivity: interpret the slope in terms of electrode responsiveness, and comment on
-   the normalised sensitivity if provided.
-4. Any aspects that could be improved (e.g. extending the linear range, reducing the LOD,
-   increasing the number of calibration points) or that indicate a high-performance sensor.
+Framing guidance: {_style['frame']}
+Cover: linearity and R² quality, LOD/LOQ in real-sample context (clinical/environmental benchmarks),
+sensitivity interpretation, normalised sensitivity if available, and any performance limitation
+or strength worth highlighting. Use µA, {unit}, cm² directly. Write 2–4 paragraphs."""
 
-Use plain text — no LaTeX. Use µA, {unit}, Ω, cm² directly. Total: 2–4 paragraphs."""
-
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -662,7 +752,8 @@ def interpret_real_sample(api_key: str, metrics: dict,
         f"  {s}: {r}%" for s, r in zip(samples, recs)
     ) if samples else "  (no individual sample data)"
 
-    prompt = f"""Interpret the following real sample spike-recovery data for the DPV determination
+    _style = _pick_style()
+    prompt = f"""Interpret the following spike-recovery data for the DPV determination
 of {analyte} in {matrix}.
 
 Recovery data:
@@ -672,18 +763,13 @@ Recovery data:
   Individual recoveries:
 {_sample_lines}
 
-Discuss:
-1. Whether the mean recovery and RSD meet the standard acceptability criteria
-   (typically 95–105 % recovery and RSD ≤ 5 % for electroanalytical methods; 90–110 % and
-   RSD ≤ 10 % for complex matrices) and what this means for practical applicability.
-2. The significance of these results for validating the method in {matrix}, including
-   any matrix effects or interferences that may explain deviations if present.
-3. The suitability of this sensor for routine determination of {analyte} in {matrix}
-   based on these recovery data.
+Framing guidance: {_style['frame']}
+Cover: whether recovery and RSD meet standard criteria (95–105 % / RSD ≤5 % for clean matrices;
+90–110 % / RSD ≤10 % for complex matrices), matrix effects or interference explanation if
+deviations exist, and overall suitability for routine {analyte} determination in {matrix}.
+Use µA, {unit} directly. Write 2–3 paragraphs."""
 
-Use plain text — no LaTeX. Use µA, {unit} directly. Total: 2–3 paragraphs."""
-
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -711,6 +797,7 @@ def interpret_literature_comparison(api_key: str, metrics: dict,
             f"Ref: {_e.get('Reference','?')}\n"
         )
 
+    _style = _pick_style()
     prompt = f"""Critically compare the following electrochemical sensor for {analyte}
 detection with previously reported sensors in the literature.
 
@@ -722,19 +809,19 @@ This work:
 Published sensors:
 {_lit_lines if _lit_lines else "  (no literature entries provided)"}
 
-Provide a concise comparative analysis (2–4 paragraphs):
-1. How does this sensor's LOD compare to the literature? Is it superior, comparable, or inferior?
-   Name specific references where the comparison is most relevant.
-2. How does the linear range cover the practically relevant concentration window for
-   {analyte} in real samples?
-3. Overall, what advances does this sensor offer over existing reported sensors
-   (e.g. simpler fabrication, greener modifier, lower LOD, wider range, faster response)?
-4. Any weaknesses or gaps that should be acknowledged or addressed in future work.
+Framing guidance: {_style['frame']}
+Provide a concise comparative analysis (3–4 paragraphs) covering:
+- How this sensor's LOD compares to the literature — superior, comparable, or inferior — naming
+  specific references where the comparison is most relevant.
+- How the linear range covers the practically relevant concentration window for {analyte}
+  in real samples.
+- What advances this sensor offers over existing reported sensors (simpler fabrication, greener
+  modifier, lower LOD, wider range, faster response).
+- Any weaknesses or gaps that should be acknowledged or addressed in future work.
 
-Use plain text — no LaTeX. Write in the style of a Biosensors & Bioelectronics discussion section.
-Total: 3–4 paragraphs."""
+Use plain text — no LaTeX. Write in the style of a Biosensors & Bioelectronics discussion section."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
 
 
 # ─────────────────────────────────────────────────────────────
@@ -755,31 +842,26 @@ def interpret_dpv_optimization(api_key: str, metrics: dict,
         f"  {k}: optimal value = {v}" for k, v in params.items()
     )
 
+    _style = _pick_style()
     prompt = f"""Interpret the following one-factor-at-a-time (OFAT) optimization results
 for a DPV electrochemical sensor for {analyte} detection.
 
 Optimized DPV and experimental parameters:
 {_param_lines}
 
-Write a concise Methods/Results-style paragraph (2–3 paragraphs) suitable for a journal paper
-(Biosensors & Bioelectronics, Sensors and Actuators B, Analytica Chimica Acta) covering:
-
-1. For each instrumental DPV parameter (pulse amplitude, pulse width, step potential):
-   explain the electrochemical rationale behind the optimal value — why too low or too high
-   a value reduces sensitivity or peak resolution.
-2. For accumulation parameters (time and potential, if present):
-   explain the preconcentration mechanism and how the optimum balances sensitivity
-   with measurement throughput.
-3. For material/loading parameters (modifier concentration, volume, incubation time):
-   interpret in terms of surface coverage, diffusion limitations, and electrode fouling.
-4. End with one sentence listing all final optimized values as they would appear in a
-   Methods section ("The optimal conditions were determined to be: pulse amplitude X mV,
-   step potential Y mV, ...").
-5. Close with one brief sentence acknowledging the inherent limitation of OFAT optimization:
-   that it evaluates each factor independently and therefore cannot capture interaction
-   effects between parameters; note that response surface methodology (e.g. Box-Behnken or
-   central composite design) would be required to fully characterize factor interactions.
+Framing guidance: {_style['frame']}
+Write 2–3 paragraphs in Methods/Results style (Biosensors & Bioelectronics, Sensors and Actuators B,
+Analytica Chimica Acta level) covering:
+- For each instrumental DPV parameter (pulse amplitude, pulse width, step potential): explain the
+  electrochemical rationale — why too low or too high a value reduces sensitivity or peak resolution.
+- For accumulation parameters (time and potential, if present): explain the preconcentration mechanism
+  and how the optimum balances sensitivity with measurement throughput.
+- For material/loading parameters (modifier concentration, volume, incubation time): interpret in
+  terms of surface coverage, diffusion limitations, and electrode fouling.
+- One sentence listing all final optimized values as they would appear in a Methods section.
+- One sentence acknowledging OFAT's inherent limitation (factor interactions not captured);
+  note that response surface methodology (Box-Behnken or central composite design) would be needed.
 
 Use plain text — no LaTeX. Use µA, mV, ms, s, V, µL directly."""
 
-    return _call(api_key, prompt, model)
+    return _call(api_key, prompt, model, extra_system=_style["addon"])
