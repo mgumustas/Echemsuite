@@ -256,14 +256,18 @@ def generate_pdf(project: dict, output_path: str, report_type: str = "detailed")
 
     # ── module sections ─────────────────────────────────────
     section_meta = {
-        "cv":   "Cyclic Voltammetry — Scan Rate Study",
-        "eis":  "Electrochemical Impedance Spectroscopy",
-        "ph":   "pH — Working pH Optimisation",
-        "cal":  "Calibration Curve, LOD & LOQ",
-        "sa":   "Standard Addition",
-        "sel":  "Selectivity / Interferent Study",
-        "stab": "Sensor Stability",
-        "surf": "Surface Characterization",
+        "cv":         "Cyclic Voltammetry — Scan Rate Study",
+        "eis":        "Electrochemical Impedance Spectroscopy",
+        "ph":         "pH — Working pH Optimisation",
+        "cal":        "Calibration Curve, LOD & LOQ",
+        "sa":         "Standard Addition",
+        "sel":        "Selectivity / Interferent Study",
+        "stab":       "Sensor Stability",
+        "surf":       "Surface Characterization",
+        "dpv":        "DPV — Sensor Calibration (LOD/LOQ)",
+        "dpvopt":     "DPV — Parameter Optimisation (OFAT)",
+        "realsample": "Real Sample Analysis (Spike-Recovery)",
+        "litcomp":    "Literature Comparison",
     }
 
     _fig_counter = 0
@@ -335,6 +339,50 @@ def generate_pdf(project: dict, output_path: str, report_type: str = "detailed")
                         ("RIGHTPADDING", (0,0), (-1,-1), 5),
                     ]))
                     story.append(tbl3)
+                    story.append(Spacer(1, 0.3*cm))
+
+            # Real Sample spike-recovery table
+            if key == "realsample":
+                rs_rows = a.get("rows", [])
+                if rs_rows:
+                    story.append(Paragraph("Spike-Recovery Results", H3))
+                    _rsc = list(rs_rows[0].keys()) if rs_rows else []
+                    _rsh = [S(str(c)) for c in _rsc]
+                    _rst = [_rsh] + [[S(str(r.get(c,""))) for c in _rsc] for r in rs_rows]
+                    _rst_tbl = Table(_rst, repeatRows=1)
+                    _rst_tbl.setStyle(TableStyle([
+                        ("BACKGROUND",   (0,0), (-1,0), navy),
+                        ("TEXTCOLOR",    (0,0), (-1,0), colors.white),
+                        ("FONTNAME",     (0,0), (-1,-1), _UNICODE_FONT),
+                        ("FONTSIZE",     (0,0), (-1,-1), 8),
+                        ("GRID",         (0,0), (-1,-1), 0.4, colors.lightgrey),
+                        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,light]),
+                        ("LEFTPADDING",  (0,0), (-1,-1), 5),
+                        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+                    ]))
+                    story.append(_rst_tbl)
+                    story.append(Spacer(1, 0.3*cm))
+
+            # Literature comparison table
+            if key == "litcomp":
+                lit_rows = a.get("rows", [])
+                if lit_rows:
+                    story.append(Paragraph("Literature Comparison Table", H3))
+                    _ltc = list(lit_rows[0].keys()) if lit_rows else []
+                    _lth = [S(str(c)) for c in _ltc]
+                    _ltt = [_lth] + [[S(str(r.get(c,""))) for c in _ltc] for r in lit_rows]
+                    _lt_tbl = Table(_ltt, repeatRows=1)
+                    _lt_tbl.setStyle(TableStyle([
+                        ("BACKGROUND",   (0,0), (-1,0), navy),
+                        ("TEXTCOLOR",    (0,0), (-1,0), colors.white),
+                        ("FONTNAME",     (0,0), (-1,-1), _UNICODE_FONT),
+                        ("FONTSIZE",     (0,0), (-1,-1), 8),
+                        ("GRID",         (0,0), (-1,-1), 0.4, colors.lightgrey),
+                        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,light]),
+                        ("LEFTPADDING",  (0,0), (-1,-1), 5),
+                        ("RIGHTPADDING", (0,0), (-1,-1), 5),
+                    ]))
+                    story.append(_lt_tbl)
                     story.append(Spacer(1, 0.3*cm))
 
             # Embedded figures
@@ -495,14 +543,18 @@ def generate_docx(project: dict, output_path: str, report_type: str = "detailed"
 
     # ── module sections ──────────────────────────────────────
     section_titles = {
-        "cv":   "📈 Cyclic Voltammetry — Scan Rate Study",
-        "eis":  "🔵 Electrochemical Impedance Spectroscopy",
-        "ph":   "🧪 pH — Working pH Optimisation",
-        "cal":  "📊 Calibration Curve, LOD & LOQ",
-        "sa":   "➕ Standard Addition",
-        "sel":  "🧬 Selectivity / Interferent Study",
-        "stab": "📅 Sensor Stability",
-        "surf": "🔬 Surface Characterization",
+        "cv":         "📈 Cyclic Voltammetry — Scan Rate Study",
+        "eis":        "🔵 Electrochemical Impedance Spectroscopy",
+        "ph":         "🧪 pH — Working pH Optimisation",
+        "cal":        "📊 Calibration Curve, LOD & LOQ",
+        "sa":         "➕ Standard Addition",
+        "sel":        "🧬 Selectivity / Interferent Study",
+        "stab":       "📅 Sensor Stability",
+        "surf":       "🔬 Surface Characterization",
+        "dpv":        "⚡ DPV — Sensor Calibration (LOD/LOQ)",
+        "dpvopt":     "🔧 DPV — Parameter Optimisation (OFAT)",
+        "realsample": "🧫 Real Sample Analysis (Spike-Recovery)",
+        "litcomp":    "📚 Literature Comparison",
     }
 
     _fig_ctr = 0
@@ -537,6 +589,21 @@ def generate_docx(project: dict, output_path: str, report_type: str = "detailed"
             # Stability daily recovery table
             if key == "stab":
                 _docx_data_table("Daily Recovery Data", a.get("rows", []))
+
+            # Real sample results table
+            if key == "realsample":
+                _docx_data_table("Spike-Recovery Results", a.get("rows", []))
+
+            # Literature comparison table
+            if key == "litcomp":
+                _docx_data_table("Literature Comparison Table", a.get("rows", []))
+
+            # DPV optimisation parameter table
+            if key == "dpvopt":
+                opt_params = a.get("metrics", {}).get("optimal_params", {})
+                if opt_params:
+                    opt_rows = [{"Parameter": k, "Optimal Value": v} for k, v in opt_params.items()]
+                    _docx_data_table("Optimal Parameters", opt_rows)
 
             # Figures — use stored DPI metadata for correct sizing at ≥300 DPI
             for i, pb in enumerate(a.get("plot_bytes", [])):
