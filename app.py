@@ -75,7 +75,8 @@ from ai_interpreter     import (interpret_cv, interpret_eis, interpret_ph,
                                   interpret_selectivity, interpret_stability, interpret_surface,
                                   interpret_full_project,
                                   interpret_dpv_calibration, interpret_real_sample,
-                                  interpret_literature_comparison)
+                                  interpret_literature_comparison,
+                                  interpret_dpv_optimization)
 from report_generator   import generate_reports
 
 # ═══════════════════════════════════════════════════════════
@@ -721,6 +722,7 @@ with st.sidebar:
         "📅  Stability",
         "🔬  Surface Characterization",
         "⚡  DPV — Sensor Calibration",
+        "🔧  DPV — Optimization",
         "🧫  Real Sample Analysis",
         "📚  Literature Comparison",
         "📄  Report",
@@ -1108,6 +1110,7 @@ if page == "🏠  Home":
         ("📅", "Stability",           "Daily % recovery · RSD trend",        "📅  Stability",                "stab"),
         ("🔬", "Surface Charact.",    "SEM · EIS · bare vs modified CV",     "🔬  Surface Characterization", "surf"),
         ("⚡", "DPV Calibration",    "LOD · LOQ · sensitivity · linear range", "⚡  DPV — Sensor Calibration", "dpv"),
+        ("🔧", "DPV Optimization",  "OFAT · pulse amp · step · tacc · modifier", "🔧  DPV — Optimization", "dpvopt"),
         ("🧫", "Real Sample",        "Spike-recovery · % RSD · matrices",   "🧫  Real Sample Analysis",     "realsample"),
         ("📚", "Literature Table",   "Compare LOD vs published sensors",    "📚  Literature Comparison",    "litcomp"),
         ("📄", "Report",              "PDF + Word  ·  all plots embedded",   "📄  Report",                  None),
@@ -3850,6 +3853,196 @@ elif page == "⚡  DPV — Sensor Calibration":
         st.info("💡 Assign concentrations to all files (must be > 0) and ensure at least 3 points.")
     else:
         st.info("💡 Upload DPV CSV files above or enter data manually to begin.")
+
+
+# ═══════════════════════════════════════════════════════════
+# 🔧  DPV — OPTIMIZATION (OFAT)
+# ═══════════════════════════════════════════════════════════
+elif page == "🔧  DPV — Optimization":
+    st.title("🔧 DPV Parameter Optimization")
+    st.caption(f"Project: **{_cur().get('name','')}**")
+    st.markdown(
+        "One-factor-at-a-time (OFAT) optimization of DPV parameters. "
+        "For each parameter, record the peak current (Ipa) at each tested value — "
+        "the app marks the optimum and builds a summary table for the Methods section."
+    )
+
+    # ── Predefined parameters ───────────────────────────────
+    _OFAT_PARAMS = {
+        "Pulse Amplitude (mV)":      {"unit": "mV",   "hint": "10, 20, 30, 40, 50, 60, 70, 80 mV"},
+        "Pulse Width (ms)":          {"unit": "ms",   "hint": "10, 20, 30, 40, 50, 60 ms"},
+        "Step Potential (mV)":       {"unit": "mV",   "hint": "2, 4, 6, 8, 10 mV"},
+        "Accumulation Time (s)":     {"unit": "s",    "hint": "0, 30, 60, 90, 120, 150 s"},
+        "Accumulation Potential (V)":{"unit": "V",    "hint": "-0.4, -0.2, 0.0, 0.2 V"},
+        "Modifier Loading (µL)":     {"unit": "µL",   "hint": "2, 4, 6, 8, 10 µL"},
+        "Modifier Concentration (mg/mL)": {"unit": "mg/mL", "hint": "0.5, 1.0, 1.5, 2.0 mg/mL"},
+        "Electrolyte Concentration (mM)": {"unit": "mM",   "hint": "10, 25, 50, 100, 200 mM"},
+        "Scan Rate (mV/s)":          {"unit": "mV/s", "hint": "10, 25, 50, 75, 100 mV/s"},
+        "Custom parameter…":         {"unit": "",     "hint": ""},
+    }
+
+    # ── Load saved optimizations from project ────────────────
+    _opt_saved = _cur().get("analyses", {}).get("dpvopt", {}).get("params", {})
+
+    # ── Add new parameter scan ───────────────────────────────
+    st.markdown("#### Add an optimization run")
+    _opt_sel = st.selectbox("Parameter to optimize", list(_OFAT_PARAMS.keys()), key="opt_param_sel")
+    if _opt_sel == "Custom parameter…":
+        _cust_col1, _cust_col2 = st.columns(2)
+        _opt_name = _cust_col1.text_input("Parameter name", key="opt_custom_name",
+                                           placeholder="e.g. Incubation time (min)")
+        _opt_unit = _cust_col2.text_input("Unit", key="opt_custom_unit", placeholder="min")
+    else:
+        _opt_name = _opt_sel
+        _opt_unit = _OFAT_PARAMS[_opt_sel]["unit"]
+
+    _opt_hint = _OFAT_PARAMS.get(_opt_sel, {}).get("hint", "")
+    if _opt_hint:
+        st.caption(f"Typical range: {_opt_hint}")
+
+    _opt_n = st.number_input("Number of tested values", min_value=2, max_value=20,
+                              value=6, key="opt_n_vals")
+
+    _ov_cols = st.columns(2)
+    _ov_cols[0].markdown(f"**{_opt_name or 'Value'} ({_opt_unit})**")
+    _ov_cols[1].markdown("**Ipa (µA)**")
+
+    _opt_vals, _opt_ipa = [], []
+    for _oi in range(int(_opt_n)):
+        _oc1, _oc2 = st.columns(2)
+        _v = _oc1.number_input(f"val_{_oi}", value=0.0, format="%.4f",
+                                label_visibility="collapsed", key=f"opt_v_{_oi}")
+        _i = _oc2.number_input(f"ipa_{_oi}", value=0.0, format="%.4f",
+                                label_visibility="collapsed", key=f"opt_i_{_oi}")
+        if _v != 0.0 or _i != 0.0:
+            _opt_vals.append(_v)
+            _opt_ipa.append(_i)
+
+    _can_opt = len(_opt_vals) >= 2 and _opt_name and any(i != 0.0 for i in _opt_ipa)
+
+    if _can_opt:
+        import numpy as np
+        _ov = np.array(_opt_vals)
+        _oi_arr = np.array(_opt_ipa)
+        _sort_i = np.argsort(_ov)
+        _ov, _oi_arr = _ov[_sort_i], _oi_arr[_sort_i]
+
+        _best_idx = int(np.argmax(np.abs(_oi_arr)))
+        _opt_value = float(_ov[_best_idx])
+        _opt_ipa_best = float(_oi_arr[_best_idx])
+
+        import plotly.graph_objects as go
+        _fig_opt = go.Figure()
+        _fig_opt.add_trace(go.Scatter(
+            x=list(_ov), y=list(_oi_arr),
+            mode="lines+markers",
+            marker=dict(size=8, color="#2563EB"),
+            line=dict(color="#2563EB", width=2),
+            name="Ipa",
+        ))
+        _fig_opt.add_trace(go.Scatter(
+            x=[_opt_value], y=[_opt_ipa_best],
+            mode="markers",
+            marker=dict(size=14, color="#EF4444", symbol="star"),
+            name=f"Optimum: {_opt_value} {_opt_unit}",
+        ))
+        _fig_opt.update_layout(
+            xaxis_title=f"{_opt_name} ({_opt_unit})",
+            yaxis_title="Ipa (µA)",
+            title=f"Optimization: {_opt_name}",
+            height=380,
+            margin=dict(l=60, r=20, t=50, b=50),
+        )
+        st.plotly_chart(_fig_opt, use_container_width=True)
+        st.success(f"⭐ Optimum: **{_opt_value} {_opt_unit}** → Ipa = **{_opt_ipa_best:.3f} µA**")
+
+        if st.button("💾 Save this optimization run", key="btn_save_opt"):
+            _existing = _cur().get("analyses", {}).get("dpvopt", {})
+            _existing_params = _existing.get("params", {})
+            _existing_params[_opt_name] = {
+                "unit":        _opt_unit,
+                "values":      list(_ov),
+                "ipa":         list(_oi_arr),
+                "optimum":     _opt_value,
+                "optimum_ipa": _opt_ipa_best,
+            }
+            _all_metrics = {k: v for k, v in _existing.get("metrics", {}).items()}
+            _all_metrics[_opt_name] = f"{_opt_value} {_opt_unit}"
+            _save_analysis("dpvopt", _all_metrics, None)
+            # Also update params dict manually
+            _proj_data = st.session_state.get("projects", [])
+            for _p in _proj_data:
+                if _p.get("name") == _cur().get("name"):
+                    if "analyses" not in _p: _p["analyses"] = {}
+                    if "dpvopt" not in _p["analyses"]: _p["analyses"]["dpvopt"] = {}
+                    _p["analyses"]["dpvopt"]["params"] = _existing_params
+            st.success(f"✅ Saved: {_opt_name} = {_opt_value} {_opt_unit}")
+            st.rerun()
+
+    # ── Summary of all saved optimizations ──────────────────
+    _opt_saved = _cur().get("analyses", {}).get("dpvopt", {}).get("params", {})
+    if _opt_saved:
+        st.markdown("---")
+        st.markdown("#### Optimized parameters summary")
+        import pandas as pd
+        _sum_rows = []
+        _opt_figs = []
+        for _pname, _pdata in _opt_saved.items():
+            _sum_rows.append({
+                "Parameter":      _pname,
+                "Optimum value":  f"{_pdata['optimum']} {_pdata['unit']}",
+                "Ipa at optimum": f"{_pdata['optimum_ipa']:.3f} µA",
+            })
+        st.dataframe(pd.DataFrame(_sum_rows), use_container_width=True, hide_index=True)
+
+        # Multi-panel figure
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots as _msp
+        _np2 = len(_opt_saved)
+        _ncols_fig = min(3, _np2)
+        _nrows_fig = (_np2 + _ncols_fig - 1) // _ncols_fig
+        _fig_all = _msp(rows=_nrows_fig, cols=_ncols_fig,
+                        subplot_titles=list(_opt_saved.keys()))
+        for _pi, (_pname, _pdata) in enumerate(_opt_saved.items()):
+            _r = _pi // _ncols_fig + 1
+            _c = _pi % _ncols_fig + 1
+            _fig_all.add_trace(go.Scatter(
+                x=_pdata["values"], y=_pdata["ipa"],
+                mode="lines+markers",
+                marker=dict(size=7, color="#2563EB"),
+                line=dict(color="#2563EB", width=1.5),
+                showlegend=False,
+            ), row=_r, col=_c)
+            _fig_all.add_trace(go.Scatter(
+                x=[_pdata["optimum"]], y=[_pdata["optimum_ipa"]],
+                mode="markers",
+                marker=dict(size=12, color="#EF4444", symbol="star"),
+                showlegend=False,
+            ), row=_r, col=_c)
+        _fig_all.update_layout(height=300 * _nrows_fig,
+                                title_text="DPV Parameter Optimization Overview",
+                                margin=dict(l=40, r=20, t=60, b=40))
+        st.plotly_chart(_fig_all, use_container_width=True)
+
+        # AI interpretation
+        st.markdown("---")
+        st.markdown("#### AI Interpretation")
+        _opt_metrics = {
+            "optimized_parameters": {k: f"{v['optimum']} {v['unit']}" for k, v in _opt_saved.items()},
+            "analyte": _cur().get("analyses", {}).get("dpv", {}).get("metrics", {}).get("analyte", "analyte"),
+        }
+        _ai_interpret_btn(
+            "dpvopt",
+            interpret_dpv_optimization,
+            {"metrics": _opt_metrics},
+            result_key="dpvopt_interp",
+            btn_key="ai_dpvopt_inline",
+        )
+        if st.session_state.get("dpvopt_interp"):
+            st.markdown(st.session_state["dpvopt_interp"])
+    elif not _can_opt:
+        st.info("💡 Enter values and Ipa measurements above, then save each optimization run. "
+                "A summary table with all parameters will appear here.")
 
 
 # ═══════════════════════════════════════════════════════════
