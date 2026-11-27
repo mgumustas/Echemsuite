@@ -4445,8 +4445,20 @@ elif page == "📚  Literature Comparison":
         if "lit_fetched_rows" in st.session_state and st.session_state.lit_fetched_rows:
             import pandas as pd
             _fd  = pd.DataFrame(st.session_state.lit_fetched_rows)
-            # İç kullanım kolonlarını gizle
-            _fd_show = _fd[[c for c in _fd.columns if not c.startswith("_")]]
+            # _title → "Title", _doi → "DOI" olarak yeniden adlandır, diğer _ kolonları gizle
+            _fd_show = _fd.copy()
+            if "_title" in _fd_show.columns:
+                _fd_show = _fd_show.rename(columns={"_title": "Title"})
+            if "_doi" in _fd_show.columns:
+                _fd_show = _fd_show.rename(columns={"_doi": "DOI"})
+            # Kalan _ kolonlarını çıkar
+            _fd_show = _fd_show[[c for c in _fd_show.columns if not c.startswith("_")]]
+            # Sütun sırası: Title, DOI önce, sonra analitik kolonlar
+            _priority = ["Title", "DOI", "Reference", "Electrode/Modifier",
+                         "Method", "LOD", "Linear range", "Sensitivity"]
+            _ordered = [c for c in _priority if c in _fd_show.columns] + \
+                       [c for c in _fd_show.columns if c not in _priority]
+            _fd_show = _fd_show[_ordered]
             st.markdown(f"**{len(_fd_show)} papers fetched** — review and import:")
             st.dataframe(_fd_show, use_container_width=True, hide_index=True)
             if st.button("📋 Import to table", key="lit_import_btn"):
