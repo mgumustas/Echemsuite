@@ -4438,15 +4438,28 @@ elif page == "📚  Literature Comparison":
                     elif _fetched:
                         _abs_n  = _fstatus.get("abstract_found", 0)
                         _tot_n  = _fstatus.get("count", len(_fetched))
-                        _ai_tag = f" · 🤖 {_ai_prov} ile analiz edildi" if _ai_key else ""
+                        _ai_tag = f"🤖 **{_ai_prov}** ile analiz" if _ai_key else "⚡ regex"
                         st.success(
-                            f"✅ {_tot_n} papers found via **{_fstatus.get('source','?')}** — "
-                            f"{_abs_n}/{_tot_n} abstracts parsed{_ai_tag}."
+                            f"✅ {_tot_n} makale bulundu (**{_fstatus.get('source','?')}**) — "
+                            f"{_abs_n}/{_tot_n} abstract çekildi · {_ai_tag}."
                         )
-                        if _abs_n == 0:
+                        if not _ai_key:
                             st.info(
-                                "No abstracts returned — LOD/LR columns will be empty. "
-                                "Try OpenAlex only, or check your Scopus institutional access."
+                                "💡 AI analiz aktif değil — sidebar'da Claude/OpenAI key girin "
+                                "ve tekrar fetch yapın. AI, LOD/LR/sensitivity/electrode değerlerini "
+                                "çok daha doğru çıkarır."
+                            )
+                        if _abs_n == 0:
+                            st.warning(
+                                "⚠️ Hiç abstract çekilemedi — 'Abstract' kolonundaki ❌ olan "
+                                "makalelerin DOI'si OpenAlex'te eşleşmemiş demektir. "
+                                "OpenAlex only modunu deneyin."
+                            )
+                        elif _abs_n < _tot_n:
+                            _miss = _tot_n - _abs_n
+                            st.info(
+                                f"ℹ️ {_miss} makalenin abstract'ı çekilemedi (tablo'da ❌). "
+                                "Bu makaleler için değerler boş kalacak."
                             )
                         st.session_state["lit_fetched_rows"] = _fetched
                     else:
@@ -4457,16 +4470,20 @@ elif page == "📚  Literature Comparison":
         if "lit_fetched_rows" in st.session_state and st.session_state.lit_fetched_rows:
             import pandas as pd
             _fd  = pd.DataFrame(st.session_state.lit_fetched_rows)
-            # _title → "Title", _doi → "DOI" olarak yeniden adlandır, diğer _ kolonları gizle
             _fd_show = _fd.copy()
+            # _has_abstract → okunabilir ikon
+            if "_has_abstract" in _fd_show.columns:
+                _fd_show["Abstract"] = _fd_show["_has_abstract"].map(
+                    {True: "✅", False: "❌ yok"})
+            # _title → "Title", _doi → "DOI"
             if "_title" in _fd_show.columns:
                 _fd_show = _fd_show.rename(columns={"_title": "Title"})
             if "_doi" in _fd_show.columns:
                 _fd_show = _fd_show.rename(columns={"_doi": "DOI"})
             # Kalan _ kolonlarını çıkar
             _fd_show = _fd_show[[c for c in _fd_show.columns if not c.startswith("_")]]
-            # Sütun sırası: Title, DOI önce, sonra analitik kolonlar
-            _priority = ["Title", "DOI", "Reference", "Electrode/Modifier",
+            # Sütun sırası: Abstract ikonu, Title, DOI, sonra analitik kolonlar
+            _priority = ["Abstract", "Title", "DOI", "Reference", "Electrode/Modifier",
                          "Method", "LOD", "Linear range", "Sensitivity"]
             _ordered = [c for c in _priority if c in _fd_show.columns] + \
                        [c for c in _fd_show.columns if c not in _priority]
