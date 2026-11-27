@@ -4431,6 +4431,7 @@ elif page == "📚  Literature Comparison":
                             prefer_openalex=_prefer_oa,
                             ai_key=_ai_key,
                             ai_provider=_ai_prov,
+                            gemini_model=st.session_state.get("gemini_model", "gemini-2.0-flash"),
                         )
 
                     # Uyarıları göster
