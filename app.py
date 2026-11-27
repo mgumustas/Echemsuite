@@ -3398,6 +3398,37 @@ elif page == "🔬  Surface Characterization":
                     st.error(str(_e))
 
         st.markdown("**Rct values (from equivalent circuit fit)**")
+        # ── Auto-fill Rct from saved EIS analysis ──────────────
+        _eis_saved = _cur().get("analyses", {}).get("eis", {})
+        _eis_rct_list = _eis_saved.get("metrics", {}).get("Rct (Ω)", [])
+        _eis_electrodes = _eis_saved.get("metrics", {}).get("electrodes", [])
+        if _eis_rct_list and len(_eis_rct_list) >= 1:
+            # Try to identify bare/modified by electrode filename
+            def _is_bare(name: str) -> bool:
+                return any(k in name.lower() for k in ("bare","gce","blank","ref","unmod"))
+            if len(_eis_rct_list) >= 2 and _eis_electrodes:
+                _bare_idx = next((i for i, n in enumerate(_eis_electrodes) if _is_bare(n)), 0)
+                _mod_idx  = next((i for i, n in enumerate(_eis_electrodes) if not _is_bare(n)),
+                                 1 if len(_eis_electrodes) > 1 else 0)
+                _auto_rct_bare = float(_eis_rct_list[_bare_idx])
+                _auto_rct_mod  = float(_eis_rct_list[_mod_idx])
+                _rct_label = (f"🔗 EIS analizinden otomatik alındı — "
+                              f"{_eis_electrodes[_bare_idx]} → Bare, "
+                              f"{_eis_electrodes[_mod_idx]} → Modified")
+            elif len(_eis_rct_list) == 1:
+                _auto_rct_bare = float(_eis_rct_list[0])
+                _auto_rct_mod  = 0.0
+                _rct_label = "🔗 EIS analizinden 1 elektrot alındı — Modified değeri elle girin"
+            else:
+                _auto_rct_bare = _auto_rct_mod = 0.0
+                _rct_label = ""
+            if _auto_rct_bare > 0 and st.session_state.get("rct_bare", 0.0) == 0.0:
+                st.session_state["rct_bare"] = _auto_rct_bare
+            if _auto_rct_mod > 0 and st.session_state.get("rct_mod", 0.0) == 0.0:
+                st.session_state["rct_mod"] = _auto_rct_mod
+            if _rct_label:
+                st.caption(_rct_label)
+        # ───────────────────────────────────────────────────────
         _rc1, _rc2 = st.columns(2)
         _rct_bare = _rc1.number_input("Rct – Bare GCE (Ω)", value=0.0, min_value=0.0, format="%.1f", key="rct_bare",
                                        help="Charge-transfer resistance of the unmodified electrode from Randles equivalent circuit fit. Rct(bare) >> Rct(modified) means the modifier accelerates electron transfer.")
@@ -3553,6 +3584,9 @@ elif page == "🔬  Surface Characterization":
         if _has_sem_bare: _sem_imgs.append("bare electrode")
         if _has_sem_mod:  _sem_imgs.append("modified electrode")
         _surf_ai_metrics["SEM images available"] = ", ".join(_sem_imgs)
+    # Flag: actual SEM image files are being sent — tell the prompt to do morphology analysis
+    if _has_sem_bare or _has_sem_mod:
+        _surf_ai_metrics["has_sem_images"] = True
 
     if not _surf_ai_metrics:
         st.info("💡 EIS veya CV verisi girin (Rct / Ipa alanlarını doldurun) ya da SEM gözlemini yazın — ardından AI yorumu üretebilirsiniz.")
