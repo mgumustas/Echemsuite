@@ -4407,14 +4407,18 @@ elif page == "📚  Literature Comparison":
                     _lf_spec.loader.exec_module(_lf_mod)
 
                     _prefer_oa = (_fetch_src == "OpenAlex only")
-                    # Aktif AI sağlayıcısının key'ini al
-                    _ai_prov   = st.session_state.get("ai_provider", "Claude")
-                    _ai_key_map = {
-                        "Claude":  st.session_state.get("api_key", ""),
-                        "OpenAI":  st.session_state.get("openai_api_key", ""),
-                        "Gemini":  st.session_state.get("gemini_api_key", ""),
-                    }
-                    _ai_key = _ai_key_map.get(_ai_prov, "")
+                    # Aktif AI sağlayıcısını normalize et
+                    # session_state'te "Claude (Anthropic)" / "ChatGPT (OpenAI)" / "Gemini (Google)" olarak geliyor
+                    _ai_prov_full = st.session_state.get("ai_provider", "Claude (Anthropic)")
+                    if _ai_prov_full.startswith("ChatGPT"):
+                        _ai_prov = "OpenAI"
+                        _ai_key  = st.session_state.get("openai_api_key", "")
+                    elif _ai_prov_full.startswith("Gemini"):
+                        _ai_prov = "Gemini"
+                        _ai_key  = st.session_state.get("gemini_api_key", "")
+                    else:
+                        _ai_prov = "Claude"
+                        _ai_key  = st.session_state.get("api_key", "")
                     _spin_msg = ("🤖 AI ile analiz ediliyor (bu biraz uzun sürebilir)…"
                                  if _ai_key else "Scopus / OpenAlex aranıyor…")
                     with st.spinner(_spin_msg):
