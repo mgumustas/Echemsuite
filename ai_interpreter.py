@@ -735,3 +735,47 @@ Use plain text — no LaTeX. Write in the style of a Biosensors & Bioelectronics
 Total: 3–4 paragraphs."""
 
     return _call(api_key, prompt, model)
+
+
+# ─────────────────────────────────────────────────────────────
+# DPV OPTIMIZATION INTERPRETATION
+# ─────────────────────────────────────────────────────────────
+def interpret_dpv_optimization(api_key: str, metrics: dict,
+                                model: str = "claude-opus-5-5") -> str:
+    """AI interpretation of OFAT DPV parameter optimization results."""
+    if not metrics:
+        return "No optimization data provided."
+
+    analyte = metrics.get("analyte", "analyte")
+    params  = metrics.get("optimized_parameters", {})
+    if not params:
+        return "No optimized parameters recorded yet."
+
+    _param_lines = "\n".join(
+        f"  {k}: optimal value = {v}" for k, v in params.items()
+    )
+
+    prompt = f"""Interpret the following one-factor-at-a-time (OFAT) optimization results
+for a DPV electrochemical sensor for {analyte} detection.
+
+Optimized DPV and experimental parameters:
+{_param_lines}
+
+Write a concise Methods/Results-style paragraph (2–3 paragraphs) suitable for a journal paper
+(Biosensors & Bioelectronics, Sensors and Actuators B, Analytica Chimica Acta) covering:
+
+1. For each instrumental DPV parameter (pulse amplitude, pulse width, step potential):
+   explain the electrochemical rationale behind the optimal value — why too low or too high
+   a value reduces sensitivity or peak resolution.
+2. For accumulation parameters (time and potential, if present):
+   explain the preconcentration mechanism and how the optimum balances sensitivity
+   with measurement throughput.
+3. For material/loading parameters (modifier concentration, volume, incubation time):
+   interpret in terms of surface coverage, diffusion limitations, and electrode fouling.
+4. End with one sentence listing all final optimized values as they would appear in a
+   Methods section ("The optimal conditions were determined to be: pulse amplitude X mV,
+   step potential Y mV, ...").
+
+Use plain text — no LaTeX. Use µA, mV, ms, s, V, µL directly."""
+
+    return _call(api_key, prompt, model)
