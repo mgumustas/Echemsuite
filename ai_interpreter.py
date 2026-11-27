@@ -715,9 +715,9 @@ def interpret_literature_comparison(api_key: str, metrics: dict,
 detection with previously reported sensors in the literature.
 
 This work:
-  LOD: {own_lod:.4g if isinstance(own_lod, float) else own_lod} {unit}
-  Linear range: {own_lr} {unit}
-  Sensitivity: {own_sens:.4f if isinstance(own_sens, float) else own_sens} µA/{unit}
+  LOD: {f"{own_lod:.4g}" if isinstance(own_lod, float) else (own_lod if own_lod is not None else "—")} {unit}
+  Linear range: {own_lr if own_lr is not None else "—"} {unit}
+  Sensitivity: {f"{own_sens:.4f}" if isinstance(own_sens, float) else (own_sens if own_sens is not None else "—")} µA/{unit}
 
 Published sensors:
 {_lit_lines if _lit_lines else "  (no literature entries provided)"}
