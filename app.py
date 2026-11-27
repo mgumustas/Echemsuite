@@ -73,7 +73,9 @@ from analytical_module  import run_analytical_performance, standard_addition, ic
 from ai_interpreter     import (interpret_cv, interpret_eis, interpret_ph,
                                   interpret_calibration, interpret_standard_addition,
                                   interpret_selectivity, interpret_stability, interpret_surface,
-                                  interpret_full_project)
+                                  interpret_full_project,
+                                  interpret_dpv_calibration, interpret_real_sample,
+                                  interpret_literature_comparison)
 from report_generator   import generate_reports
 
 # ═══════════════════════════════════════════════════════════
@@ -718,6 +720,9 @@ with st.sidebar:
         "🧬  Selectivity",
         "📅  Stability",
         "🔬  Surface Characterization",
+        "⚡  DPV — Sensor Calibration",
+        "🧫  Real Sample Analysis",
+        "📚  Literature Comparison",
         "📄  Report",
     ]
     _NAV_KEY     = f"nav_radio_{_current_user}"
@@ -740,6 +745,7 @@ with st.sidebar:
 | **Stability** | `Day`, `Signal_uA`, `SD_uA` | — · µA |
 | **Surface EIS** | `Zreal_Ohm`, `Zimag_Ohm` | Ω |
 | **Surface CV** | `Potential_V`, `Current_uA` | V · µA |
+| **DPV Cal.** | `Potential_V`, `Current_uA` | V · µA — one file per concentration |
 
 💡 Use the **⬇️ Download CSV Template** buttons in each module for pre-filled examples.
         """)
@@ -1101,6 +1107,9 @@ if page == "🏠  Home":
         ("🧬", "Selectivity",         "Interferents · % signal change",      "🧬  Selectivity",              "sel"),
         ("📅", "Stability",           "Daily % recovery · RSD trend",        "📅  Stability",                "stab"),
         ("🔬", "Surface Charact.",    "SEM · EIS · bare vs modified CV",     "🔬  Surface Characterization", "surf"),
+        ("⚡", "DPV Calibration",    "LOD · LOQ · sensitivity · linear range", "⚡  DPV — Sensor Calibration", "dpv"),
+        ("🧫", "Real Sample",        "Spike-recovery · % RSD · matrices",   "🧫  Real Sample Analysis",     "realsample"),
+        ("📚", "Literature Table",   "Compare LOD vs published sensors",    "📚  Literature Comparison",    "litcomp"),
         ("📄", "Report",              "PDF + Word  ·  all plots embedded",   "📄  Report",                  None),
     ]
 
@@ -3610,6 +3619,475 @@ elif page == "🔬  Surface Characterization":
         if st.session_state.get("surf_interp"):
             st.markdown("#### 📝 AI Commentary")
             st.markdown(st.session_state["surf_interp"])
+
+# ═══════════════════════════════════════════════════════════
+# ⚡  DPV — SENSOR CALIBRATION
+# ═══════════════════════════════════════════════════════════
+elif page == "⚡  DPV — Sensor Calibration":
+    st.title("⚡ DPV Sensor Calibration")
+    st.caption(f"Project: **{_cur().get('name','')}**")
+    st.markdown(
+        "Upload one DPV file per concentration. The app auto-detects the peak current "
+        "(Ipa) in your chosen potential window, fits a linear calibration curve, and "
+        "calculates LOD, LOQ, and sensitivity."
+    )
+
+    # ── Helper: parse a DPV CSV ─────────────────────────────
+    def _parse_dpv_file(f) -> tuple:
+        """Return (potential_array, current_uA_array) or raise."""
+        import io
+        f.seek(0)
+        raw = f.read().decode("utf-8", errors="replace")
+        f.seek(0)
+        import csv
+        dialect = csv.Sniffer().sniff(raw[:2048], delimiters=",;\t ")
+        reader = csv.DictReader(io.StringIO(raw), dialect=dialect)
+        rows = list(reader)
+        if not rows:
+            raise ValueError("Empty file")
+        hdr = [h.strip() for h in rows[0].keys()]
+        # Find potential column
+        pot_col = next((h for h in hdr if any(k in h.lower() for k in
+                        ("potential","e_","e /","e(v)","volt","pot"))), hdr[0])
+        # Find current column
+        cur_col = next((h for h in hdr if any(k in h.lower() for k in
+                        ("current","i_","i /","curr","i(","ia","uA","µa","μa"))), hdr[1])
+        import numpy as np
+        pot = np.array([float(r[pot_col]) for r in rows if r[pot_col].strip()])
+        cur = np.array([float(r[cur_col]) for r in rows if r[cur_col].strip()])
+        # Convert A → µA if values look like they're in Amperes
+        if np.max(np.abs(cur)) < 0.01:
+            cur = cur * 1e6
+        return pot, cur
+
+    def _find_peak(pot, cur, e_min, e_max, peak_type="anodic"):
+        """Return peak current in the given potential window."""
+        import numpy as np
+        mask = (pot >= e_min) & (pot <= e_max)
+        if not np.any(mask):
+            raise ValueError(f"No data in window {e_min}–{e_max} V")
+        cur_w = cur[mask]
+        return float(np.max(cur_w)) if peak_type == "anodic" else float(np.min(cur_w))
+
+    # ── Settings row ────────────────────────────────────────
+    _dset1, _dset2, _dset3, _dset4 = st.columns([1,1,1,1])
+    _dpv_emin   = _dset1.number_input("Peak window E min (V)", value=0.0,  format="%.3f", key="dpv_emin")
+    _dpv_emax   = _dset2.number_input("Peak window E max (V)", value=0.8,  format="%.3f", key="dpv_emax")
+    _dpv_ptype  = _dset3.selectbox("Peak type", ["anodic (max)", "cathodic (min)"], key="dpv_ptype")
+    _CONC_UNITS = ["µM","nM","mM","mg/L","µg/L","ng/mL","mol/L"]
+    _dpv_unit   = _dset4.selectbox("Concentration unit", _CONC_UNITS, key="dpv_unit")
+    _peak_type  = "anodic" if "anodic" in _dpv_ptype else "cathodic"
+
+    _dpv_analyte = st.text_input("Analyte name", value=st.session_state.get("dpv_analyte",""), key="dpv_analyte")
+
+    # ── ECSA from CV (optional) for sensitivity per cm² ────
+    _dpv_ecsa = None
+    _cv_saved = _cur().get("analyses", {}).get("cv", {}).get("metrics", {})
+    if _cv_saved.get("ecsa") or _cv_saved.get("ECSA_cm2"):
+        _dpv_ecsa = float(_cv_saved.get("ecsa") or _cv_saved.get("ECSA_cm2") or 0) or None
+        if _dpv_ecsa:
+            st.info(f"🔗 ECSA from CV module: **{_dpv_ecsa:.4f} cm²** — will be used for normalised sensitivity.")
+
+    st.markdown("---")
+
+    # ── File uploader ────────────────────────────────────────
+    st.markdown("#### 1. Upload DPV files (one per concentration)")
+    _dpv_files = st.file_uploader(
+        "Select all DPV CSV files at once",
+        type=["csv","txt","dat"],
+        accept_multiple_files=True,
+        key="dpv_files_up",
+    )
+
+    # ── Concentration labels ─────────────────────────────────
+    _dpv_concs: list[float] = []
+    _dpv_ipa:   list[float] = []
+    _dpv_names: list[str]   = []
+
+    if _dpv_files:
+        st.markdown("#### 2. Assign concentrations & verify peaks")
+        _n = len(_dpv_files)
+        _cols_hdr = st.columns([3, 2, 2])
+        _cols_hdr[0].markdown("**File**")
+        _cols_hdr[1].markdown(f"**Concentration ({_dpv_unit})**")
+        _cols_hdr[2].markdown("**Detected Ipa (µA)**")
+
+        _parse_errors = []
+        for _idx, _fobj in enumerate(_dpv_files):
+            _fc1, _fc2, _fc3 = st.columns([3, 2, 2])
+            _fc1.caption(_fobj.name)
+            _conc_val = _fc2.number_input(
+                f"conc_{_idx}", label_visibility="collapsed",
+                min_value=0.0, value=0.0, format="%.4f",
+                key=f"dpv_conc_{_idx}",
+            )
+            try:
+                _pot, _cur = _parse_dpv_file(_fobj)
+                _ipa = _find_peak(_pot, _cur, _dpv_emin, _dpv_emax, _peak_type)
+                _fc3.metric("", f"{_ipa:.3f} µA")
+                _dpv_concs.append(_conc_val)
+                _dpv_ipa.append(_ipa)
+                _dpv_names.append(_fobj.name)
+            except Exception as _pe:
+                _fc3.error(f"⚠ {_pe}")
+                _parse_errors.append(str(_pe))
+
+    # ── Manual table fallback ────────────────────────────────
+    with st.expander("📝 Or enter data manually (no files needed)", expanded=not _dpv_files):
+        st.markdown(f"Enter concentration ({_dpv_unit}) and peak current (µA) pairs:")
+        _n_rows = st.number_input("Number of points", min_value=3, max_value=30, value=6, key="dpv_nrows_manual")
+        _man_concs, _man_ipa = [], []
+        _mcols = st.columns(2)
+        for _mi in range(int(_n_rows)):
+            _mc = _mcols[0].number_input(f"C{_mi+1} ({_dpv_unit})", value=0.0, min_value=0.0,
+                                          format="%.4f", key=f"dpv_mc_{_mi}")
+            _mi2 = _mcols[1].number_input(f"Ipa{_mi+1} (µA)", value=0.0,
+                                           format="%.4f", key=f"dpv_mi_{_mi}")
+            if _mc > 0 and _mi2 != 0.0:
+                _man_concs.append(_mc)
+                _man_ipa.append(_mi2)
+        if _man_concs and not _dpv_files:
+            _dpv_concs = _man_concs
+            _dpv_ipa   = _man_ipa
+            _dpv_names = [f"Point {i+1}" for i in range(len(_man_concs))]
+
+    # ── Calibration calculation ──────────────────────────────
+    _can_run = len(_dpv_concs) >= 3 and all(c > 0 for c in _dpv_concs)
+    if _can_run:
+        st.markdown("---")
+        st.markdown("#### 3. Calibration curve & results")
+        import numpy as np
+        from scipy import stats as _stats
+        _x = np.array(_dpv_concs)
+        _y = np.array(_dpv_ipa)
+        _sort_idx = np.argsort(_x)
+        _x, _y = _x[_sort_idx], _y[_sort_idx]
+
+        _slope, _intercept, _r, _pval, _stderr = _stats.linregress(_x, _y)
+        _r2 = _r ** 2
+        _residuals = _y - (_slope * _x + _intercept)
+        _sigma = float(np.std(_residuals, ddof=2)) if len(_residuals) > 2 else float(np.std(_residuals))
+
+        _lod = 3.0 * _sigma / abs(_slope)
+        _loq = 10.0 * _sigma / abs(_slope)
+        _linear_range_low  = float(_x.min())
+        _linear_range_high = float(_x.max())
+        _sensitivity_per_cm2 = (abs(_slope) / _dpv_ecsa) if _dpv_ecsa else None
+
+        # Plot
+        import plotly.graph_objects as go
+        _fig_dpv = go.Figure()
+        _x_fit = np.linspace(_x.min(), _x.max(), 200)
+        _y_fit = _slope * _x_fit + _intercept
+        _fig_dpv.add_trace(go.Scatter(x=_x, y=_y, mode="markers",
+                                       marker=dict(size=9, color="#2563EB"),
+                                       name="Measured Ipa"))
+        _fig_dpv.add_trace(go.Scatter(x=_x_fit, y=_y_fit, mode="lines",
+                                       line=dict(color="#EF4444", width=2),
+                                       name=f"Linear fit (R²={_r2:.5f})"))
+        _fig_dpv.update_layout(
+            xaxis_title=f"Concentration ({_dpv_unit})",
+            yaxis_title="Ipa (µA)",
+            title=f"DPV Calibration — {_dpv_analyte or 'Analyte'}",
+            height=400,
+            legend=dict(x=0.02, y=0.98),
+            margin=dict(l=60, r=20, t=50, b=50),
+        )
+        st.plotly_chart(_fig_dpv, use_container_width=True)
+
+        # Results table
+        _res_col1, _res_col2 = st.columns(2)
+        with _res_col1:
+            st.markdown("**Regression**")
+            st.markdown(f"- Slope: **{_slope:.4f} µA/{_dpv_unit}**")
+            st.markdown(f"- Intercept: **{_intercept:.4f} µA**")
+            st.markdown(f"- R²: **{_r2:.5f}**")
+            st.markdown(f"- Linear range: **{_linear_range_low:.4g}–{_linear_range_high:.4g} {_dpv_unit}**")
+        with _res_col2:
+            st.markdown("**Figures of merit**")
+            st.markdown(f"- LOD: **{_lod:.4g} {_dpv_unit}**")
+            st.markdown(f"- LOQ: **{_loq:.4g} {_dpv_unit}**")
+            if _sensitivity_per_cm2:
+                st.markdown(f"- Sensitivity: **{abs(_slope):.4f} µA/{_dpv_unit}**")
+                st.markdown(f"- Norm. sensitivity: **{_sensitivity_per_cm2:.4f} µA/{_dpv_unit}·cm²**")
+            else:
+                st.markdown(f"- Sensitivity: **{abs(_slope):.4f} µA/{_dpv_unit}**")
+                st.caption("Add electrode area or run CV first for normalised sensitivity.")
+
+        # Save to project
+        _dpv_metrics = {
+            "analyte":        _dpv_analyte,
+            "unit":           _dpv_unit,
+            "slope":          round(_slope, 6),
+            "intercept":      round(_intercept, 6),
+            "R2":             round(_r2, 6),
+            "LOD":            round(_lod, 6),
+            "LOQ":            round(_loq, 6),
+            "linear_range":   f"{_linear_range_low:.4g}–{_linear_range_high:.4g}",
+            "sensitivity":    round(abs(_slope), 6),
+            "n_points":       len(_x),
+            "peak_window_V":  f"{_dpv_emin}–{_dpv_emax}",
+        }
+        if _sensitivity_per_cm2:
+            _dpv_metrics["sensitivity_norm"] = round(_sensitivity_per_cm2, 6)
+
+        _save_analysis("dpv", _dpv_metrics, None)
+
+        # ── AI interpretation ────────────────────────────────
+        st.markdown("---")
+        st.markdown("#### 4. AI Interpretation")
+        _ai_interpret_btn(
+            "dpv",
+            interpret_dpv_calibration,
+            {"metrics": _dpv_metrics},
+            result_key="dpv_interp",
+            btn_key="ai_dpv_inline",
+        )
+        if st.session_state.get("dpv_interp"):
+            st.markdown(st.session_state["dpv_interp"])
+
+    elif _dpv_files or _dpv_concs:
+        st.info("💡 Assign concentrations to all files (must be > 0) and ensure at least 3 points.")
+    else:
+        st.info("💡 Upload DPV CSV files above or enter data manually to begin.")
+
+
+# ═══════════════════════════════════════════════════════════
+# 🧫  REAL SAMPLE ANALYSIS
+# ═══════════════════════════════════════════════════════════
+elif page == "🧫  Real Sample Analysis":
+    st.title("🧫 Real Sample Analysis")
+    st.caption(f"Project: **{_cur().get('name','')}**")
+    st.markdown(
+        "Enter the known (spiked) and found (measured from calibration) concentrations "
+        "for each sample to calculate recovery % and RSD."
+    )
+
+    # Pull LOD/LOQ/unit from DPV module if available
+    _dpv_saved = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
+    _rs_unit   = _dpv_saved.get("unit", "µM")
+    _rs_slope  = _dpv_saved.get("slope")
+    _rs_int    = _dpv_saved.get("intercept")
+    if _dpv_saved:
+        st.info(f"🔗 Calibration from DPV module: slope={_rs_slope:.4f} µA/{_rs_unit}, "
+                f"intercept={_rs_int:.4f} µA — concentrations will be back-calculated from Ipa if needed.")
+
+    # Settings
+    _rsc1, _rsc2, _rsc3 = st.columns(3)
+    _rs_analyte = _rsc1.text_input("Analyte", value=_dpv_saved.get("analyte",""), key="rs_analyte")
+    _UNITS2 = ["µM","nM","mM","mg/L","µg/L","ng/mL","mol/L"]
+    _rs_unit_sel = _rsc2.selectbox("Unit", _UNITS2,
+                                    index=_UNITS2.index(_rs_unit) if _rs_unit in _UNITS2 else 0,
+                                    key="rs_unit_sel")
+    _MATRIX_TYPES = ["Urine","Blood serum","Tap water","River water","Food extract",
+                     "Pharmaceutical","Soil extract","Other"]
+    _rs_matrix = _rsc3.selectbox("Sample matrix", _MATRIX_TYPES, key="rs_matrix")
+
+    st.markdown("---")
+    st.markdown("#### Sample data entry")
+
+    _n_samples = st.number_input("Number of samples", min_value=1, max_value=20, value=3, key="rs_n")
+    _input_mode = st.radio("Input mode", ["Concentration (direct)", "Current → back-calculate"],
+                            horizontal=True, key="rs_input_mode")
+
+    _rs_known, _rs_found, _rs_labels = [], [], []
+    _hdr1, _hdr2, _hdr3 = st.columns([2, 2, 2])
+    _hdr1.markdown(f"**Sample label**")
+    _hdr2.markdown(f"**Spiked / Known ({_rs_unit_sel})**")
+    _hdr3.markdown(f"**{'Found (' + _rs_unit_sel + ')' if _input_mode.startswith('Conc') else 'Measured Ipa (µA)'}**")
+
+    for _si in range(int(_n_samples)):
+        _sc1, _sc2, _sc3 = st.columns([2, 2, 2])
+        _lbl = _sc1.text_input(f"Label {_si+1}", value=f"S{_si+1}", key=f"rs_lbl_{_si}",
+                                label_visibility="collapsed")
+        _known = _sc2.number_input(f"Known {_si+1}", min_value=0.0, value=0.0,
+                                    format="%.4f", key=f"rs_known_{_si}",
+                                    label_visibility="collapsed")
+        _meas = _sc3.number_input(f"Found {_si+1}", value=0.0, format="%.4f",
+                                   key=f"rs_meas_{_si}", label_visibility="collapsed")
+        if _known > 0 and _meas != 0.0:
+            _rs_known.append(_known)
+            _rs_labels.append(_lbl)
+            if _input_mode.startswith("Current") and _rs_slope and abs(_rs_slope) > 0:
+                _found_c = (_meas - _rs_int) / _rs_slope
+                _rs_found.append(max(0.0, _found_c))
+            else:
+                _rs_found.append(_meas)
+
+    if len(_rs_known) >= 1:
+        import numpy as np
+        _recoveries = [(_rs_found[i] / _rs_known[i]) * 100 for i in range(len(_rs_known))]
+        _rec_arr = np.array(_recoveries)
+        _mean_rec = float(np.mean(_rec_arr))
+        _rsd      = float(np.std(_rec_arr, ddof=1) / np.mean(_rec_arr) * 100) if len(_rec_arr) > 1 else 0.0
+
+        st.markdown("---")
+        st.markdown("#### Results")
+
+        import pandas as pd
+        _rs_df = pd.DataFrame({
+            "Sample":        _rs_labels,
+            f"Added ({_rs_unit_sel})": _rs_known,
+            f"Found ({_rs_unit_sel})": [round(v, 4) for v in _rs_found],
+            "Recovery (%)": [round(r, 2) for r in _recoveries],
+        })
+        st.dataframe(_rs_df, use_container_width=True, hide_index=True)
+
+        _r1, _r2, _r3 = st.columns(3)
+        _r1.metric("Mean Recovery", f"{_mean_rec:.2f}%")
+        if len(_rec_arr) > 1:
+            _r2.metric("RSD", f"{_rsd:.2f}%")
+        _r3.metric("n samples", len(_rs_known))
+
+        # Acceptability flag
+        if 95 <= _mean_rec <= 105 and _rsd <= 5:
+            st.success("✅ Acceptable: recovery 95–105 % and RSD ≤ 5 % — meets typical analytical criteria.")
+        elif 90 <= _mean_rec <= 110 and _rsd <= 10:
+            st.warning("⚠️ Marginal: recovery within 90–110 % but criteria are relaxed — verify method selectivity.")
+        else:
+            st.error("❌ Outside acceptable range — check calibration, matrix effects, or extraction efficiency.")
+
+        # Save
+        _rs_metrics = {
+            "analyte":     _rs_analyte,
+            "matrix":      _rs_matrix,
+            "unit":        _rs_unit_sel,
+            "mean_recovery_%": round(_mean_rec, 3),
+            "RSD_%":       round(_rsd, 3) if len(_rec_arr) > 1 else "N/A",
+            "n_samples":   len(_rs_known),
+            "samples":     _rs_labels,
+            "recoveries":  [round(r, 2) for r in _recoveries],
+        }
+        _save_analysis("realsample", _rs_metrics, None)
+
+        # AI
+        st.markdown("---")
+        st.markdown("#### AI Interpretation")
+        _ai_interpret_btn(
+            "realsample",
+            interpret_real_sample,
+            {"metrics": _rs_metrics},
+            result_key="rs_interp",
+            btn_key="ai_rs_inline",
+        )
+        if st.session_state.get("rs_interp"):
+            st.markdown(st.session_state["rs_interp"])
+    else:
+        st.info("💡 Fill at least one row (spiked and found concentrations both > 0).")
+
+
+# ═══════════════════════════════════════════════════════════
+# 📚  LITERATURE COMPARISON
+# ═══════════════════════════════════════════════════════════
+elif page == "📚  Literature Comparison":
+    st.title("📚 Literature Comparison Table")
+    st.caption(f"Project: **{_cur().get('name','')}**")
+    st.markdown(
+        "Build the standard 'comparison with previously reported sensors' table required "
+        "by most electroanalytical journals. Add rows manually — Scopus/WoS integration coming soon."
+    )
+
+    # Pull own sensor data
+    _dpv_s = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
+    _lit_analyte = _dpv_s.get("analyte", "")
+    _lit_unit    = _dpv_s.get("unit", "µM")
+    _lit_own_lod = _dpv_s.get("LOD")
+    _lit_own_lr  = _dpv_s.get("linear_range")
+    _lit_own_sens= _dpv_s.get("sensitivity")
+
+    if _dpv_s:
+        st.info(
+            f"🔗 Your sensor — Analyte: **{_lit_analyte}** | "
+            f"LOD: **{_lit_own_lod:.4g} {_lit_unit}** | "
+            f"Linear range: **{_lit_own_lr} {_lit_unit}** | "
+            f"Sensitivity: **{_lit_own_sens:.4f} µA/{_lit_unit}**"
+        )
+
+    st.markdown("---")
+    st.markdown("#### Add literature entries")
+
+    _lit_n = st.number_input("Number of literature rows", min_value=1, max_value=20, value=5, key="lit_n")
+
+    # Header
+    _lhdr = st.columns([2, 2, 1.5, 1.5, 1.5, 1.5])
+    for _h, _t in zip(_lhdr, ["Electrode / Modifier", "Method", f"LOD ({_lit_unit})",
+                                f"Linear range ({_lit_unit})", f"Sensitivity (µA/{_lit_unit})", "Reference"]):
+        _h.markdown(f"**{_t}**")
+
+    _lit_rows = []
+    for _li in range(int(_lit_n)):
+        _lc = st.columns([2, 2, 1.5, 1.5, 1.5, 1.5])
+        _electrode = _lc[0].text_input(f"Electrode {_li+1}", value="", key=f"lit_elec_{_li}",
+                                        label_visibility="collapsed", placeholder="e.g. GCE/MoS₂")
+        _method    = _lc[1].text_input(f"Method {_li+1}", value="", key=f"lit_meth_{_li}",
+                                        label_visibility="collapsed", placeholder="e.g. DPV")
+        _lod_v     = _lc[2].text_input(f"LOD {_li+1}", value="", key=f"lit_lod_{_li}",
+                                        label_visibility="collapsed", placeholder="0.01")
+        _lr_v      = _lc[3].text_input(f"LR {_li+1}", value="", key=f"lit_lr_{_li}",
+                                        label_visibility="collapsed", placeholder="0.1–100")
+        _sens_v    = _lc[4].text_input(f"Sens {_li+1}", value="", key=f"lit_sens_{_li}",
+                                        label_visibility="collapsed", placeholder="1.23")
+        _ref_v     = _lc[5].text_input(f"Ref {_li+1}", value="", key=f"lit_ref_{_li}",
+                                        label_visibility="collapsed", placeholder="Author, Year")
+        if _electrode.strip():
+            _lit_rows.append({
+                "Electrode/Modifier": _electrode,
+                "Method": _method,
+                f"LOD ({_lit_unit})": _lod_v,
+                f"Linear range ({_lit_unit})": _lr_v,
+                f"Sensitivity": _sens_v,
+                "Reference": _ref_v,
+            })
+
+    # Always append own sensor as last row
+    if _dpv_s:
+        _lit_rows.append({
+            "Electrode/Modifier": f"**This work** ({_cur().get('name','')})",
+            "Method": "DPV",
+            f"LOD ({_lit_unit})": f"{_lit_own_lod:.4g}" if _lit_own_lod else "",
+            f"Linear range ({_lit_unit})": _lit_own_lr or "",
+            f"Sensitivity": f"{_lit_own_sens:.4f}" if _lit_own_sens else "",
+            "Reference": "This work",
+        })
+
+    if _lit_rows:
+        st.markdown("---")
+        st.markdown("#### Comparison table")
+        import pandas as pd
+        _lit_df = pd.DataFrame(_lit_rows)
+        st.dataframe(_lit_df, use_container_width=True, hide_index=True)
+
+        # Save
+        _save_analysis("litcomp", {
+            "analyte":    _lit_analyte,
+            "unit":       _lit_unit,
+            "n_entries":  len(_lit_rows),
+            "entries":    _lit_rows,
+        }, None)
+
+        # AI summary
+        st.markdown("---")
+        st.markdown("#### AI comparison summary")
+        _lit_metrics = {
+            "analyte": _lit_analyte,
+            "unit":    _lit_unit,
+            "own_LOD": _lit_own_lod,
+            "own_linear_range": _lit_own_lr,
+            "own_sensitivity": _lit_own_sens,
+            "literature": _lit_rows[:-1] if _dpv_s else _lit_rows,
+        }
+        _ai_interpret_btn(
+            "litcomp",
+            interpret_literature_comparison,
+            {"metrics": _lit_metrics},
+            result_key="lit_interp",
+            btn_key="ai_lit_inline",
+        )
+        if st.session_state.get("lit_interp"):
+            st.markdown(st.session_state["lit_interp"])
+    else:
+        st.info("💡 Fill at least one electrode/modifier field to build the table.")
+
 
 # ═══════════════════════════════════════════════════════════
 # 📄  REPORT
