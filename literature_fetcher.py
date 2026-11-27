@@ -95,6 +95,89 @@ JSON:"""
 
 _LLM_KEYS = {"LOD", "Linear range", "Sensitivity", "Method", "Electrode"}
 
+# ── Review makale filtresi ─────────────────────────────────────────────────────
+_REVIEW_WORDS = {
+    "review", "overview", "survey", "perspective", "perspectives",
+    "mini-review", "mini review", "progress", "advances", "recent advances",
+    "emerging", "state of the art",
+}
+
+def _is_review_paper(title: str) -> bool:
+    """Başlıkta review kelimesi varsa True döner — LLM çağrısı atlanır."""
+    t = title.lower()
+    return any(kw in t for kw in _REVIEW_WORDS)
+
+
+# ── Başlıktan çıkarım promptu (abstract yoksa) ────────────────────────────────
+_TITLE_PROMPT = """\
+You are an expert in electrochemical sensors. You have ONLY the paper title below — no abstract.
+Extract what is EXPLICITLY stated in the title. Do NOT infer or guess.
+
+Return ONLY a valid JSON with these exact keys:
+- "Electrode": full electrode/modifier stack if mentioned (e.g. "ZnSNP@Gr/GCE", "MIP/rGO/SPE").
+  If the title says "ZnSNP@Gr nanocomposite" but no base electrode → write "ZnSNP@Gr".
+  If nothing about electrode → "".
+- "Method": electrochemical acronym if mentioned (DPV, SWV, CV, CA, EIS...). If not → "".
+
+Title: {title}
+
+JSON:"""
+
+
+def _call_llm(prompt: str, ai_key: str, ai_provider: str,
+              gemini_model: str, max_tokens: int = 300) -> tuple[str, str]:
+    """Ham LLM çağrısı — (raw_text, error) döner."""
+    raw = ""
+    try:
+        if ai_provider == "Claude":
+            import anthropic
+            client = anthropic.Anthropic(api_key=ai_key)
+            msg = client.messages.create(
+                model="claude-haiku-4-5", max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = msg.content[0].text.strip()
+        elif ai_provider == "OpenAI":
+            import openai
+            client = openai.OpenAI(api_key=ai_key)
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini", max_tokens=max_tokens,
+                response_format={"type": "json_object"},
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = resp.choices[0].message.content.strip()
+        elif ai_provider == "Gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=ai_key)
+            _gm = genai.GenerativeModel(
+                gemini_model,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json", temperature=0.0,
+                ),
+            )
+            raw = _gm.generate_content(prompt).text.strip()
+        else:
+            return "", f"bilinmeyen provider: {ai_provider}"
+        return raw, ""
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+
+
+def _parse_llm_json(raw: str, allowed_keys: set) -> tuple[dict, str]:
+    """LLM çıktısını JSON'a çevirir — (dict, error) döner."""
+    if "```" in raw:
+        raw = re.sub(r"```(?:json)?", "", raw).replace("```", "").strip()
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not m:
+        return {}, f"JSON bulunamadı (raw: {raw[:80]})"
+    try:
+        data = json.loads(m.group())
+        result = {k: str(v).strip() for k, v in data.items()
+                  if k in allowed_keys and str(v).strip() not in ("", "null", "None")}
+        return result, ""
+    except json.JSONDecodeError as e:
+        return {}, f"JSON parse: {e} | raw: {raw[:80]}"
+
 
 def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude",
                        gemini_model: str = "gemini-2.0-flash") -> tuple[dict, str]:
@@ -102,74 +185,35 @@ def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude",
     Döner: (çıkarılan_dict, hata_mesajı)
     Başarısızsa ({}, hata) döner → regex fallback devreye girer."""
     if not abstract or not ai_key:
-        return {}, "key yok"
+        return {}, "abstract veya key yok"
+    prompt = _LLM_PROMPT.format(abstract=abstract[:3000])
+    raw, err = _call_llm(prompt, ai_key, ai_provider, gemini_model)
+    if err:
+        return {}, err
+    return _parse_llm_json(raw, _LLM_KEYS)
 
-    prompt = _LLM_PROMPT.format(abstract=abstract[:3000])  # max ~750 token
 
-    raw = ""
-    try:
-        if ai_provider == "Claude":
-            import anthropic
-            client = anthropic.Anthropic(api_key=ai_key)
-            msg = client.messages.create(
-                model="claude-haiku-4-5",
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = msg.content[0].text.strip()
-
-        elif ai_provider == "OpenAI":
-            import openai
-            client = openai.OpenAI(api_key=ai_key)
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                max_tokens=300,
-                response_format={"type": "json_object"},
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = resp.choices[0].message.content.strip()
-
-        elif ai_provider == "Gemini":
-            import google.generativeai as genai
-            genai.configure(api_key=ai_key)
-            _gmodel = genai.GenerativeModel(
-                gemini_model,
-                generation_config=genai.GenerationConfig(
-                    response_mime_type="application/json",
-                    temperature=0.0,
-                ),
-            )
-            resp = _gmodel.generate_content(prompt)
-            raw = resp.text.strip()
-
-        else:
-            return {}, f"bilinmeyen provider: {ai_provider}"
-
-        # JSON ayıkla — güvenli parse
-        if "```" in raw:
-            raw = re.sub(r"```(?:json)?", "", raw).replace("```", "").strip()
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not m:
-            return {}, f"JSON bulunamadı (raw: {raw[:80]})"
-        data = json.loads(m.group())
-        result = {k: str(v).strip() for k, v in data.items()
-                  if k in _LLM_KEYS and str(v).strip() not in ("", "null", "None")}
-        return result, ""
-
-    except json.JSONDecodeError as e:
-        return {}, f"JSON parse hatası: {e} | raw: {raw[:80]}"
-    except Exception as e:
-        return {}, f"{type(e).__name__}: {e}"
+def _extract_from_title_llm(title: str, ai_key: str, ai_provider: str = "Claude",
+                             gemini_model: str = "gemini-2.0-flash") -> tuple[dict, str]:
+    """Sadece başlıktan Electrode ve Method çıkar (abstract yoksa fallback)."""
+    if not title or not ai_key:
+        return {}, "title veya key yok"
+    prompt = _TITLE_PROMPT.format(title=title)
+    raw, err = _call_llm(prompt, ai_key, ai_provider, gemini_model, max_tokens=100)
+    if err:
+        return {}, err
+    return _parse_llm_json(raw, {"Electrode", "Method"})
 
 
 def _extract_from_abstract(abstract: str, default_unit: str = "µM",
                             ai_key: str = "", ai_provider: str = "Claude",
                             gemini_model: str = "gemini-2.0-flash") -> dict:
     """
-    Önce LLM ile çıkarım dener (ai_key varsa).
-    LLM'in atladığı alanlar için regex ile tamamlar.
+    Önce LLM (ai_key varsa), sonra regex ile tamamlar.
+    Döner: metrics dict + "_llm_err" key'i (boş string → başarılı)
     """
-    result = {"LOD": "", "Linear range": "", "Sensitivity": "", "Method": "", "Electrode": ""}
+    result = {"LOD": "", "Linear range": "", "Sensitivity": "",
+              "Method": "", "Electrode": "", "_llm_err": ""}
     if not abstract:
         return result
 
@@ -177,7 +221,8 @@ def _extract_from_abstract(abstract: str, default_unit: str = "µM",
     if ai_key:
         llm, _llm_err = _extract_with_llm(abstract, ai_key, ai_provider,
                                            gemini_model=gemini_model)
-        for k in result:
+        result["_llm_err"] = _llm_err
+        for k in list(result.keys()):
             if llm.get(k):
                 result[k] = llm[k]
 
@@ -186,13 +231,14 @@ def _extract_from_abstract(abstract: str, default_unit: str = "µM",
         m = _RE_LOD.search(abstract)
         if m:
             val  = m.group(1).strip()
-            unit = m.group(2).strip() if m.group(2) else default_unit
+            # Birim bulunamazsa "?" koy — varsayılan µM yanlış yönlendiriyordu
+            unit = m.group(2).strip() if m.group(2) else "?"
             result["LOD"] = f"{val} {unit}"
 
     if not result["Linear range"]:
         m = _RE_LR.search(abstract)
         if m:
-            unit = m.group(3).strip() if m.group(3) else default_unit
+            unit = m.group(3).strip() if m.group(3) else "?"
             result["Linear range"] = f"{m.group(1)}–{m.group(2)} {unit}"
 
     if not result["Sensitivity"]:
@@ -220,12 +266,18 @@ _SCOPUS_ABSTRACT = "https://api.elsevier.com/content/abstract/scopus_id/{eid}"
 
 
 def _build_scopus_query(analyte: str, electrode: str, year_from: int) -> str:
+    # Analiti ayrı tut, elektrokimyasal terimler phrase olarak eşleşsin
+    # Review/overview/survey başlıklarını hariç tut
     base = (
-        f'TITLE-ABS-KEY("{analyte}" AND '
-        f'("electrochemical sensor" OR "modified electrode" OR '
-        f'"voltammetric" OR "amperometric" OR "biosensor"))'
-        f" AND PUBYEAR > {year_from - 1}"
+        f'TITLE-ABS-KEY("{analyte}") AND '
+        f'TITLE-ABS-KEY("electrochemical sensor" OR "modified electrode" OR '
+        f'"voltammetric sensor" OR "amperometric sensor" OR '
+        f'"electrochemical detection" OR "electrochemical determination") AND '
+        f'NOT TITLE("review" OR "overview" OR "survey" OR "perspective" OR '
+        f'"mini-review" OR "progress report" OR "emerging") AND '
+        f'PUBYEAR > {year_from - 1} AND DOCTYPE(ar)'
     )
+    # DOCTYPE(ar) → sadece araştırma makaleleri, review/book chapter değil
     if electrode:
         base += f' AND TITLE-ABS-KEY("{electrode}")'
     return base
@@ -336,8 +388,34 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
 
         ref_str = (authors.split(",")[0].strip() + f" et al., {year}"
                    if authors else year)
-        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider,
-                                         gemini_model=gemini_model)
+
+        # Review makale → LLM/regex'i atla, hepsi "—"
+        if _is_review_paper(title):
+            metrics = {"LOD": "", "Linear range": "", "Sensitivity": "",
+                       "Method": "", "Electrode": "", "_llm_err": "review"}
+        elif _has_abs:
+            metrics = _extract_from_abstract(abstract, ai_key=ai_key,
+                                             ai_provider=ai_provider,
+                                             gemini_model=gemini_model)
+        else:
+            # Abstract yok → başlıktan Electrode/Method çıkar
+            metrics = {"LOD": "", "Linear range": "", "Sensitivity": "",
+                       "Method": "", "Electrode": "", "_llm_err": ""}
+            if ai_key and title:
+                _tm, _te = _extract_from_title_llm(title, ai_key, ai_provider, gemini_model)
+                metrics["Electrode"] = _tm.get("Electrode", "")
+                metrics["Method"]    = _tm.get("Method", "")
+                metrics["_llm_err"]  = _te
+            # Regex ile de dene (title kısa olsa da çalışır)
+            if not metrics["Electrode"]:
+                _rm = _RE_ELECTRODE.search(title)
+                if _rm:
+                    metrics["Electrode"] = _rm.group(1)
+            if not metrics["Method"]:
+                _rm = _RE_METH.search(title)
+                if _rm:
+                    metrics["Method"] = _rm.group(1).upper()
+
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -349,6 +427,7 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
             "_doi":               doi,
             "_source":            "Scopus",
             "_has_abstract":      _has_abs,
+            "_llm_err":           metrics.get("_llm_err", ""),
         })
     return rows, abstract_found
 
@@ -410,8 +489,31 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
         _has_abs = bool(abstract)
         if _has_abs:
             abstract_found += 1
-        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider,
-                                         gemini_model=gemini_model)
+
+        if _is_review_paper(title):
+            metrics = {"LOD": "", "Linear range": "", "Sensitivity": "",
+                       "Method": "", "Electrode": "", "_llm_err": "review"}
+        elif _has_abs:
+            metrics = _extract_from_abstract(abstract, ai_key=ai_key,
+                                             ai_provider=ai_provider,
+                                             gemini_model=gemini_model)
+        else:
+            metrics = {"LOD": "", "Linear range": "", "Sensitivity": "",
+                       "Method": "", "Electrode": "", "_llm_err": ""}
+            if ai_key and title:
+                _tm, _te = _extract_from_title_llm(title, ai_key, ai_provider, gemini_model)
+                metrics["Electrode"] = _tm.get("Electrode", "")
+                metrics["Method"]    = _tm.get("Method", "")
+                metrics["_llm_err"]  = _te
+            if not metrics["Electrode"]:
+                _rm = _RE_ELECTRODE.search(title)
+                if _rm:
+                    metrics["Electrode"] = _rm.group(1)
+            if not metrics["Method"]:
+                _rm = _RE_METH.search(title)
+                if _rm:
+                    metrics["Method"] = _rm.group(1).upper()
+
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -423,6 +525,7 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
             "_doi":               doi,
             "_source":            "OpenAlex",
             "_has_abstract":      _has_abs,
+            "_llm_err":           metrics.get("_llm_err", ""),
         })
     return rows, abstract_found
 
