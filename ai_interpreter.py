@@ -404,9 +404,17 @@ def interpret_surface(api_key: str, metrics: dict, electrode_name: str = "modifi
     enhance = metrics.get("Signal Enhancement", "N/A")
     sem_note = metrics.get("SEM observation", "")
 
-    prompt = f"""Interpret the following surface characterization data for {electrode_name}
-compared to bare GCE, obtained by EIS (Nyquist) and CV in a redox probe solution.
+    _has_sem = bool(metrics.get("has_sem_images", False))
+    _sem_preamble = ""
+    if _has_sem:
+        _sem_preamble = (
+            "\nSEM/FESEM images of the electrode surface are attached. "
+            "Carefully examine the morphology of each image provided.\n"
+        )
 
+    prompt = f"""Interpret the following surface characterization data for {electrode_name}
+compared to bare GCE, obtained by EIS (Nyquist), CV in a redox probe solution, and SEM imaging.
+{_sem_preamble}
 EIS results:
   Rct (bare GCE) = {rct_b} Ω
   Rct (modified) = {rct_m} Ω
@@ -418,7 +426,7 @@ CV results (peak anodic current, ip,a):
   Signal enhancement: {enhance}
 {f"SEM observation: {sem_note}" if sem_note else ""}
 
-Discuss:
+Discuss the following points thoroughly:
 1. What the change in Rct reveals about the electron-transfer kinetics after surface modification —
    whether the modification facilitates or hinders charge transfer and why.
 2. The correlation between the EIS Rct change and the CV current enhancement, and whether
@@ -426,7 +434,14 @@ Discuss:
 3. How these surface characterization results support the electrode's suitability for
    electrocatalytic sensing of the target analyte.
 4. Any anomalies (e.g. Rct increase combined with current enhancement, or vice versa)
-   that warrant further investigation."""
+   that warrant further investigation.{'''
+5. SEM/FESEM morphological analysis: Describe in detail the surface morphology visible in the
+   attached images. Comment on particle size, distribution, porosity, aggregation, surface
+   roughness, and any structural features (nanosheets, nanoparticles, flower-like structures, etc.).
+   Compare the bare and modified electrode morphologies if both images are present.
+   Explain how the observed morphology explains or supports the electrochemical findings (Rct
+   reduction, current enhancement). Discuss how the nanostructure may contribute to the
+   increased electroactive surface area and improved electrocatalytic performance.''' if _has_sem else ''}"""
     return _call(api_key, prompt, model)
 
 
