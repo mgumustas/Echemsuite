@@ -56,20 +56,42 @@ _RE_ELECTRODE = re.compile(
 
 
 _LLM_PROMPT = """\
-You are an expert in electrochemical sensors and voltammetric analytical chemistry.
-Read the abstract below and extract these analytical parameters.
+You are a world-class expert in electrochemical sensors, voltammetry, and analytical chemistry.
 
-Return ONLY a valid JSON object with exactly these keys (empty string if not found):
-- "LOD": limit of detection — keep the EXACT value and unit from the abstract (e.g. "0.05 µM", "12 nM", "3.2 ng/mL")
-- "Linear range": linear dynamic range — format "low–high unit" (e.g. "0.1–100 µM", "5–500 nM")
-- "Sensitivity": analytical sensitivity — keep value and unit (e.g. "12.5 µA µM⁻¹ cm⁻²", "0.84 µA/µM")
-- "Method": electrochemical technique acronym (e.g. "DPV", "SWV", "CV", "CA", "EIS", "SWASV")
-- "Electrode": working electrode including ALL modifiers, as written (e.g. "MWCNTs/β-CD/GCE", "SPCE", "BiF/CPGE")
+Your task: extract EXACTLY these 5 analytical parameters from the abstract below.
+Return ONLY a valid JSON object — no explanation, no markdown, no extra text.
 
-Do NOT convert units, do NOT paraphrase, return ONLY the JSON object.
+Keys and rules:
+- "LOD": The limit of detection. Copy the EXACT number and unit as written.
+  Examples: "0.05 µM", "12 nM", "3.2 ng/mL", "0.43 pM", "2.1 × 10⁻⁹ M"
+  If stated as "X µg/L" keep it as "X µg/L". Do NOT convert. If absent → "".
+
+- "Linear range": The linear dynamic range. Format: "low–high unit".
+  Examples: "0.1–100 µM", "5–500 nM", "0.01–10 µg/mL", "1 nM–10 µM"
+  Take both endpoints and unit directly from abstract. If absent → "".
+
+- "Sensitivity": Analytical sensitivity or slope of calibration curve.
+  Examples: "12.5 µA µM⁻¹ cm⁻²", "0.84 µA/µM", "4.37 mA M⁻¹", "3.21 nA nM⁻¹"
+  If absent → "".
+
+- "Method": The primary electrochemical technique used. Use the SHORT acronym.
+  DPV=Differential pulse voltammetry, SWV=Square-wave voltammetry, CV=Cyclic voltammetry,
+  CA=Chronoamperometry, SWASV=Square-wave anodic stripping, DPASV=Differential pulse anodic stripping,
+  EIS=Electrochemical impedance spectroscopy, LSV=Linear sweep voltammetry, NPV=Normal pulse voltammetry.
+  If the full name is given (e.g. "differential pulse voltammetry"), return "DPV".
+  If absent → "".
+
+- "Electrode": The working electrode, including ALL surface modifiers in full.
+  Examples: "MWCNTs/β-CD/GCE", "SPCE", "ZnSNP@Gr/GCE", "MIP/ITO", "BiF/CPGE", "rGO-AuNPs/GCE"
+  Include every modifier layer. If the abstract says "glassy carbon electrode modified with X",
+  write "X/GCE". If absent → "".
+
+IMPORTANT: If the paper is a REVIEW or OVERVIEW (no original experimental data), return all values as "".
 
 Abstract:
-{abstract}"""
+{abstract}
+
+JSON:"""
 
 _LLM_KEYS = {"LOD", "Linear range", "Sensitivity", "Method", "Electrode"}
 
@@ -295,7 +317,8 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
                 abstract = _openalex_abstract_by_doi(doi)
                 time.sleep(0.2)
 
-        if abstract:
+        _has_abs = bool(abstract)
+        if _has_abs:
             abstract_found += 1
 
         ref_str = (authors.split(",")[0].strip() + f" et al., {year}"
@@ -311,6 +334,7 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
             "_title":             title,
             "_doi":               doi,
             "_source":            "Scopus",
+            "_has_abstract":      _has_abs,
         })
     return rows, abstract_found
 
@@ -368,7 +392,8 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
             first = name.split()[-1] if name else ""
         ref_str  = f"{first} et al., {year}" if first else year
         abstract = _reconstruct_abstract(e.get("abstract_inverted_index"))
-        if abstract:
+        _has_abs = bool(abstract)
+        if _has_abs:
             abstract_found += 1
         metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider)
         rows.append({
@@ -381,6 +406,7 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
             "_title":             title,
             "_doi":               doi,
             "_source":            "OpenAlex",
+            "_has_abstract":      _has_abs,
         })
     return rows, abstract_found
 
