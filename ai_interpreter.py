@@ -24,7 +24,10 @@ Rules:
   where relevant, and flag any anomalies worth investigating.
 - End with one sentence summarising the key take-away.
 - Do NOT use bullet points or headers inside your commentary.
-- Do NOT start with "Certainly" or any affirmation phrase."""
+- Do NOT start with "Certainly" or any affirmation phrase.
+- CRITICAL — formatting: Do NOT use LaTeX math notation ($...$, \\mu, \\text, _{}, ^{}).
+  Instead use plain Unicode symbols directly: Ω, µA, µM, cm², s⁻¹, °C, etc.
+  Write variable names in plain text: Rct, Ipa, k0, ECSA, E1/2, ΔEp."""
 
 
 # ─────────────────────────────────────────────────────────────
