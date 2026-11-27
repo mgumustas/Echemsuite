@@ -567,7 +567,9 @@ with st.sidebar:
         if _k not in st.session_state:
             st.session_state[_k] = st.secrets.get(_skey, "")
     if "ai_provider" not in st.session_state:
-        st.session_state["ai_provider"] = "Claude"
+        st.session_state["ai_provider"] = "Claude (Anthropic)"
+    if "gemini_model" not in st.session_state:
+        st.session_state["gemini_model"] = "gemini-2.0-flash"
 
     _ai_provider = st.selectbox("Provider", ["Claude (Anthropic)", "ChatGPT (OpenAI)", "Gemini (Google)"],
                                  key="ai_provider_select")
@@ -4476,10 +4478,20 @@ elif page == "📚  Literature Comparison":
             import pandas as pd
             _fd  = pd.DataFrame(st.session_state.lit_fetched_rows)
             _fd_show = _fd.copy()
-            # _has_abstract → okunabilir ikon
+            # _has_abstract → okunabilir ikon; review kontrolü
             if "_has_abstract" in _fd_show.columns:
-                _fd_show["Abstract"] = _fd_show["_has_abstract"].map(
-                    {True: "✅", False: "❌ yok"})
+                def _abs_icon(row):
+                    if row.get("_llm_err") == "review":
+                        return "📄 review"
+                    return "✅" if row.get("_has_abstract") else "❌ yok"
+                _fd_show["Abstract"] = _fd_show.apply(_abs_icon, axis=1)
+            # LLM hata varsa AI sütunu ekle
+            if "_llm_err" in _fd_show.columns:
+                _has_errs = _fd_show["_llm_err"].apply(
+                    lambda x: bool(x) and x != "review").any()
+                if _has_errs:
+                    _fd_show["AI"] = _fd_show["_llm_err"].apply(
+                        lambda x: ("⚠️ " + x[:40]) if (x and x != "review") else "✅")
             # _title → "Title", _doi → "DOI"
             if "_title" in _fd_show.columns:
                 _fd_show = _fd_show.rename(columns={"_title": "Title"})
@@ -4487,9 +4499,9 @@ elif page == "📚  Literature Comparison":
                 _fd_show = _fd_show.rename(columns={"_doi": "DOI"})
             # Kalan _ kolonlarını çıkar
             _fd_show = _fd_show[[c for c in _fd_show.columns if not c.startswith("_")]]
-            # Sütun sırası: Abstract ikonu, Title, DOI, sonra analitik kolonlar
-            _priority = ["Abstract", "Title", "DOI", "Reference", "Electrode/Modifier",
-                         "Method", "LOD", "Linear range", "Sensitivity"]
+            # Sütun sırası
+            _priority = ["Abstract", "AI", "Title", "DOI", "Reference",
+                         "Electrode/Modifier", "Method", "LOD", "Linear range", "Sensitivity"]
             _ordered = [c for c in _priority if c in _fd_show.columns] + \
                        [c for c in _fd_show.columns if c not in _priority]
             _fd_show = _fd_show[_ordered]
