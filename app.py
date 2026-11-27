@@ -309,7 +309,7 @@ def _init_state():
         else:
             _new_project(f"{_current_name}'s First Study")
     if "api_key" not in st.session_state:
-        st.session_state.api_key = ""
+        st.session_state.api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
 
 def _new_project(name: str):
     pid = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -556,20 +556,37 @@ with st.sidebar:
 
     # ── AI Configuration ─────────────────────────────────────
     st.markdown("### 🤖 AI Configuration")
-    # Session state defaults
-    for _k, _d in [("api_key",""), ("openai_api_key",""), ("gemini_api_key",""),
-                   ("ai_provider","Claude")]:
+    # Session state defaults — load from st.secrets if available
+    _secrets_map = {
+        "api_key":        "ANTHROPIC_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+        "gemini_api_key": "GEMINI_API_KEY",
+        "scopus_api_key": "SCOPUS_API_KEY",
+    }
+    for _k, _skey in _secrets_map.items():
         if _k not in st.session_state:
-            st.session_state[_k] = _d
+            st.session_state[_k] = st.secrets.get(_skey, "")
+    if "ai_provider" not in st.session_state:
+        st.session_state["ai_provider"] = "Claude"
 
     _ai_provider = st.selectbox("Provider", ["Claude (Anthropic)", "ChatGPT (OpenAI)", "Gemini (Google)"],
                                  key="ai_provider_select")
     st.session_state.ai_provider = _ai_provider
 
     if _ai_provider == "Claude (Anthropic)":
-        _ak = st.text_input("Claude API key", value=st.session_state.api_key,
-                             type="password", key="api_key_input", placeholder="sk-ant-...")
-        st.session_state.api_key = _ak
+        _ak_from_secrets = bool(st.secrets.get("ANTHROPIC_API_KEY", ""))
+        if _ak_from_secrets:
+            st.caption("🔒 Claude key loaded from Secrets")
+            with st.expander("Override key (optional)"):
+                _ak_ov = st.text_input("Claude API key override", type="password",
+                                        key="api_key_input", placeholder="sk-ant-...")
+                if _ak_ov:
+                    st.session_state.api_key = _ak_ov
+            _ak = st.session_state.api_key
+        else:
+            _ak = st.text_input("Claude API key", value=st.session_state.api_key,
+                                 type="password", key="api_key_input", placeholder="sk-ant-...")
+            st.session_state.api_key = _ak
         if _ak:
             st.caption("✅ Claude key active")
             _MODEL_OPTIONS = ["claude-opus-5-5","claude-sonnet-4-6",
@@ -587,9 +604,19 @@ with st.sidebar:
                 st.session_state.ai_model = "claude-opus-5-5"
 
     elif _ai_provider == "ChatGPT (OpenAI)":
-        _gk = st.text_input("OpenAI API key", value=st.session_state.openai_api_key,
-                             type="password", key="gpt_key_input", placeholder="sk-...")
-        st.session_state.openai_api_key = _gk
+        _gk_from_secrets = bool(st.secrets.get("OPENAI_API_KEY", ""))
+        if _gk_from_secrets:
+            st.caption("🔒 OpenAI key loaded from Secrets")
+            with st.expander("Override key (optional)"):
+                _gk_ov = st.text_input("OpenAI API key override", type="password",
+                                        key="gpt_key_input", placeholder="sk-...")
+                if _gk_ov:
+                    st.session_state.openai_api_key = _gk_ov
+            _gk = st.session_state.openai_api_key
+        else:
+            _gk = st.text_input("OpenAI API key", value=st.session_state.openai_api_key,
+                                 type="password", key="gpt_key_input", placeholder="sk-...")
+            st.session_state.openai_api_key = _gk
         if _gk:
             st.caption("✅ OpenAI key active")
             _GPT_FALLBACK = ["gpt-4o","gpt-4o-mini","gpt-4-turbo","gpt-3.5-turbo"]
@@ -619,9 +646,19 @@ with st.sidebar:
             st.caption("platform.openai.com → API Keys")
 
     else:  # Gemini
-        _gmk = st.text_input("Gemini API key", value=st.session_state.gemini_api_key,
-                              type="password", key="gemini_key_input", placeholder="AIza...")
-        st.session_state.gemini_api_key = _gmk
+        _gmk_from_secrets = bool(st.secrets.get("GEMINI_API_KEY", ""))
+        if _gmk_from_secrets:
+            st.caption("🔒 Gemini key loaded from Secrets")
+            with st.expander("Override key (optional)"):
+                _gmk_ov = st.text_input("Gemini API key override", type="password",
+                                         key="gemini_key_input", placeholder="AIza...")
+                if _gmk_ov:
+                    st.session_state.gemini_api_key = _gmk_ov
+            _gmk = st.session_state.gemini_api_key
+        else:
+            _gmk = st.text_input("Gemini API key", value=st.session_state.gemini_api_key,
+                                  type="password", key="gemini_key_input", placeholder="AIza...")
+            st.session_state.gemini_api_key = _gmk
         if _gmk:
             st.caption("✅ Gemini key active")
             # Try to fetch available models from API; fall back to known list
@@ -653,6 +690,26 @@ with st.sidebar:
                 st.caption(f"📡 {len(_fetched)} model API'dan alındı")
         else:
             st.caption("aistudio.google.com → Get API key")
+
+    # ── Scopus API Key ───────────────────────────────────────
+    st.divider()
+    st.markdown("### 📚 Scopus / Literature")
+    _sk_from_secrets = bool(st.secrets.get("SCOPUS_API_KEY", ""))
+    if _sk_from_secrets:
+        st.caption("🔒 Scopus key loaded from Secrets")
+        with st.expander("Override Scopus key (optional)"):
+            _sk_ov = st.text_input("Scopus API key override", type="password",
+                                    key="scopus_key_sidebar", placeholder="2b4f8a...")
+            if _sk_ov:
+                st.session_state.scopus_api_key = _sk_ov
+    else:
+        _sk = st.text_input("Scopus API key", value=st.session_state.get("scopus_api_key",""),
+                             type="password", key="scopus_key_sidebar", placeholder="2b4f8a...")
+        if _sk:
+            st.session_state.scopus_api_key = _sk
+            st.caption("✅ Scopus key active")
+        else:
+            st.caption("dev.elsevier.com → API Keys")
 
     # ── Plot Style ───────────────────────────────────────────
     with st.expander("🎨 Plot Style"):
@@ -4307,8 +4364,67 @@ elif page == "📚  Literature Comparison":
     st.caption(f"Project: **{_cur().get('name','')}**")
     st.markdown(
         "Build the standard 'comparison with previously reported sensors' table required "
-        "by most electroanalytical journals. Add rows manually — Scopus/WoS integration coming soon."
+        "by most electroanalytical journals. Add rows manually or auto-fetch from Scopus/OpenAlex."
     )
+
+    # ── Auto-fetch from Scopus / OpenAlex ────────────────────────────────────
+    with st.expander("🔍 Auto-fetch from Scopus / OpenAlex", expanded=False):
+        _scopus_key_avail = st.session_state.get("scopus_api_key", "")
+        if not _scopus_key_avail:
+            st.info("Scopus API key bulunamadı. Streamlit Secrets'a `SCOPUS_API_KEY` ekle "
+                    "veya sidebar'da override gir.")
+            _scopus_ov = st.text_input("Scopus API key (bu oturum için)", type="password",
+                                        key="scopus_key_override", placeholder="2b4f8a...")
+            if _scopus_ov:
+                st.session_state.scopus_api_key = _scopus_ov
+                _scopus_key_avail = _scopus_ov
+
+        _fetch_analyte   = st.text_input("Analyte", value=_dpv_s.get("analyte",""),
+                                          key="lit_fetch_analyte", placeholder="e.g. dopamine")
+        _fetch_electrode = st.text_input("Electrode type (opsiyonel)",
+                                          key="lit_fetch_electrode", placeholder="e.g. GCE, carbon paste")
+        _fetch_year      = st.number_input("From year", min_value=2000, max_value=2026, value=2018,
+                                            key="lit_fetch_year")
+        _fetch_n         = st.number_input("Max results", min_value=5, max_value=50, value=20,
+                                            key="lit_fetch_n")
+
+        if st.button("🔍 Literatür Çek", key="lit_fetch_btn"):
+            if not _fetch_analyte.strip():
+                st.warning("Analyte girilmedi.")
+            else:
+                try:
+                    import importlib.util as _ilu
+                    _lf_spec = _ilu.spec_from_file_location(
+                        "literature_fetcher",
+                        str(__file__).replace("app.py","literature_fetcher.py"))
+                    _lf_mod  = _ilu.module_from_spec(_lf_spec)
+                    _lf_spec.loader.exec_module(_lf_mod)
+
+                    with st.spinner("Scopus/OpenAlex taranıyor..."):
+                        _fetched = _lf_mod.fetch_literature(
+                            analyte=_fetch_analyte.strip(),
+                            electrode=_fetch_electrode.strip(),
+                            year_from=int(_fetch_year),
+                            max_results=int(_fetch_n),
+                            scopus_key=st.session_state.get("scopus_api_key",""),
+                        )
+                    if _fetched:
+                        st.session_state["lit_fetched_rows"] = _fetched
+                        st.success(f"✅ {len(_fetched)} makale bulundu — aşağıdaki tabloyu kontrol et.")
+                    else:
+                        st.warning("Sonuç bulunamadı. Anahtar kelimeyi veya yılı değiştir.")
+                except Exception as _lfe:
+                    st.error(f"Fetch hatası: {_lfe}")
+
+        if "lit_fetched_rows" in st.session_state and st.session_state.lit_fetched_rows:
+            import pandas as pd
+            _fd = pd.DataFrame(st.session_state.lit_fetched_rows)
+            st.markdown(f"**{len(_fd)} otomatik çekilen satır** (aşağıya manuel ekle veya direkt kaydet):")
+            st.dataframe(_fd, use_container_width=True, hide_index=True)
+            if st.button("📋 Bu satırları tabloya aktar", key="lit_import_btn"):
+                st.session_state["lit_import_pending"] = True
+                st.rerun()
+    # ─────────────────────────────────────────────────────────────────────────
 
     # Pull own sensor data
     _dpv_s = _cur().get("analyses", {}).get("dpv", {}).get("metrics", {})
