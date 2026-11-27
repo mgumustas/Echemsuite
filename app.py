@@ -4374,9 +4374,9 @@ elif page == "📚  Literature Comparison":
     with st.expander("🔍 Auto-fetch from Scopus / OpenAlex", expanded=False):
         _scopus_key_avail = st.session_state.get("scopus_api_key", "")
         if not _scopus_key_avail:
-            st.info("Scopus API key bulunamadı. Streamlit Secrets'a `SCOPUS_API_KEY` ekle "
-                    "veya sidebar'da override gir.")
-            _scopus_ov = st.text_input("Scopus API key (bu oturum için)", type="password",
+            st.info("No Scopus API key found. Add `SCOPUS_API_KEY` to Streamlit Secrets, "
+                    "or enter it below for this session.")
+            _scopus_ov = st.text_input("Scopus API key (this session)", type="password",
                                         key="scopus_key_override", placeholder="2b4f8a...")
             if _scopus_ov:
                 st.session_state.scopus_api_key = _scopus_ov
@@ -4384,47 +4384,72 @@ elif page == "📚  Literature Comparison":
 
         _fetch_analyte   = st.text_input("Analyte", value=_dpv_s.get("analyte",""),
                                           key="lit_fetch_analyte", placeholder="e.g. dopamine")
-        _fetch_electrode = st.text_input("Electrode type (opsiyonel)",
+        _fetch_electrode = st.text_input("Electrode type (optional)",
                                           key="lit_fetch_electrode", placeholder="e.g. GCE, carbon paste")
-        _fetch_year      = st.number_input("From year", min_value=2000, max_value=2026, value=2018,
-                                            key="lit_fetch_year")
-        _fetch_n         = st.number_input("Max results", min_value=5, max_value=50, value=20,
-                                            key="lit_fetch_n")
+        _fc1, _fc2, _fc3 = st.columns(3)
+        _fetch_year = _fc1.number_input("From year", min_value=2000, max_value=2026, value=2018,
+                                         key="lit_fetch_year")
+        _fetch_n    = _fc2.number_input("Max results", min_value=5, max_value=50, value=20,
+                                         key="lit_fetch_n")
+        _fetch_src  = _fc3.radio("Source", ["Scopus + OpenAlex", "OpenAlex only"],
+                                  key="lit_fetch_src", horizontal=False)
 
-        if st.button("🔍 Literatür Çek", key="lit_fetch_btn"):
+        if st.button("🔍 Fetch literature", key="lit_fetch_btn"):
             if not _fetch_analyte.strip():
-                st.warning("Analyte girilmedi.")
+                st.warning("Please enter an analyte name.")
             else:
                 try:
                     import importlib.util as _ilu
                     _lf_spec = _ilu.spec_from_file_location(
                         "literature_fetcher",
-                        str(__file__).replace("app.py","literature_fetcher.py"))
-                    _lf_mod  = _ilu.module_from_spec(_lf_spec)
+                        str(__file__).replace("app.py", "literature_fetcher.py"))
+                    _lf_mod = _ilu.module_from_spec(_lf_spec)
                     _lf_spec.loader.exec_module(_lf_mod)
 
-                    with st.spinner("Scopus/OpenAlex taranıyor..."):
-                        _fetched = _lf_mod.fetch_literature(
+                    _prefer_oa = (_fetch_src == "OpenAlex only")
+                    with st.spinner("Searching Scopus / OpenAlex…"):
+                        _fetched, _fstatus = _lf_mod.fetch_literature(
                             analyte=_fetch_analyte.strip(),
                             electrode=_fetch_electrode.strip(),
                             year_from=int(_fetch_year),
                             max_results=int(_fetch_n),
-                            scopus_key=st.session_state.get("scopus_api_key",""),
+                            scopus_key=st.session_state.get("scopus_api_key", ""),
+                            prefer_openalex=_prefer_oa,
                         )
-                    if _fetched:
+
+                    # Uyarıları göster
+                    for _w in _fstatus.get("warnings", []):
+                        st.warning(_w)
+
+                    if _fstatus.get("error") and not _fetched:
+                        st.error(f"❌ {_fstatus['error']}")
+                    elif _fetched:
+                        _abs_n = _fstatus.get("abstract_found", 0)
+                        _tot_n = _fstatus.get("count", len(_fetched))
+                        st.success(
+                            f"✅ {_tot_n} papers found via **{_fstatus.get('source','?')}** — "
+                            f"{_abs_n}/{_tot_n} abstracts parsed for LOD/LR/sensitivity."
+                        )
+                        if _abs_n == 0:
+                            st.info(
+                                "No abstracts returned — LOD/LR columns will be empty. "
+                                "This usually means the API key lacks COMPLETE view access. "
+                                "Try OpenAlex only, or check your Scopus institutional access."
+                            )
                         st.session_state["lit_fetched_rows"] = _fetched
-                        st.success(f"✅ {len(_fetched)} makale bulundu — aşağıdaki tabloyu kontrol et.")
                     else:
-                        st.warning("Sonuç bulunamadı. Anahtar kelimeyi veya yılı değiştir.")
+                        st.warning("No results found. Try a different analyte or year range.")
                 except Exception as _lfe:
-                    st.error(f"Fetch hatası: {_lfe}")
+                    st.error(f"Fetch error: {_lfe}")
 
         if "lit_fetched_rows" in st.session_state and st.session_state.lit_fetched_rows:
             import pandas as pd
-            _fd = pd.DataFrame(st.session_state.lit_fetched_rows)
-            st.markdown(f"**{len(_fd)} otomatik çekilen satır** (aşağıya manuel ekle veya direkt kaydet):")
-            st.dataframe(_fd, use_container_width=True, hide_index=True)
-            if st.button("📋 Bu satırları tabloya aktar", key="lit_import_btn"):
+            _fd  = pd.DataFrame(st.session_state.lit_fetched_rows)
+            # İç kullanım kolonlarını gizle
+            _fd_show = _fd[[c for c in _fd.columns if not c.startswith("_")]]
+            st.markdown(f"**{len(_fd_show)} papers fetched** — review and import:")
+            st.dataframe(_fd_show, use_container_width=True, hide_index=True)
+            if st.button("📋 Import to table", key="lit_import_btn"):
                 st.session_state["lit_import_pending"] = True
                 st.rerun()
     # ─────────────────────────────────────────────────────────────────────────
@@ -4503,11 +4528,11 @@ elif page == "📚  Literature Comparison":
 
     # ➕ Yeni boş satır ekle
     _add_col, _clr_col = st.columns([1, 1])
-    if _add_col.button("➕ Satır ekle", key="lit_add_row"):
+    if _add_col.button("➕ Add row", key="lit_add_row"):
         st.session_state.lit_rows_data.append(
             {"Electrode/Modifier":"","Method":"","LOD":"","Linear range":"","Sensitivity":"","Reference":""})
         st.rerun()
-    if _clr_col.button("🗑️ Tümünü temizle", key="lit_clear_all"):
+    if _clr_col.button("🗑️ Clear all", key="lit_clear_all"):
         st.session_state.lit_rows_data = []
         st.rerun()
 
@@ -4568,7 +4593,7 @@ elif page == "📚  Literature Comparison":
         if st.session_state.get("lit_interp"):
             st.markdown(st.session_state["lit_interp"])
     else:
-        st.info("💡 ➕ Satır ekle butonuyla manuel giriş yap ya da Auto-fetch ile Scopus'tan çek.")
+        st.info("💡 Use ➕ Add row for manual entry, or fetch automatically from Scopus / OpenAlex above.")
 
 
 # ═══════════════════════════════════════════════════════════
