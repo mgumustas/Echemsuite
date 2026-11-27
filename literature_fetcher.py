@@ -96,22 +96,24 @@ JSON:"""
 _LLM_KEYS = {"LOD", "Linear range", "Sensitivity", "Method", "Electrode"}
 
 
-def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude") -> dict:
+def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude",
+                       gemini_model: str = "gemini-2.0-flash") -> tuple[dict, str]:
     """LLM ile abstract'tan elektrokimyasal parametreleri çıkar.
-    Claude Haiku veya GPT-4o-mini kullanır (hızlı + ucuz).
-    Başarısızsa boş dict döner → regex fallback devreye girer."""
+    Döner: (çıkarılan_dict, hata_mesajı)
+    Başarısızsa ({}, hata) döner → regex fallback devreye girer."""
     if not abstract or not ai_key:
-        return {}
+        return {}, "key yok"
 
     prompt = _LLM_PROMPT.format(abstract=abstract[:3000])  # max ~750 token
 
+    raw = ""
     try:
         if ai_provider == "Claude":
             import anthropic
             client = anthropic.Anthropic(api_key=ai_key)
             msg = client.messages.create(
                 model="claude-haiku-4-5",
-                max_tokens=256,
+                max_tokens=300,
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = msg.content[0].text.strip()
@@ -121,7 +123,7 @@ def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude") -
             client = openai.OpenAI(api_key=ai_key)
             resp = client.chat.completions.create(
                 model="gpt-4o-mini",
-                max_tokens=256,
+                max_tokens=300,
                 response_format={"type": "json_object"},
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -130,30 +132,39 @@ def _extract_with_llm(abstract: str, ai_key: str, ai_provider: str = "Claude") -
         elif ai_provider == "Gemini":
             import google.generativeai as genai
             genai.configure(api_key=ai_key)
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            resp = model.generate_content(prompt)
+            _gmodel = genai.GenerativeModel(
+                gemini_model,
+                generation_config=genai.GenerationConfig(
+                    response_mime_type="application/json",
+                    temperature=0.0,
+                ),
+            )
+            resp = _gmodel.generate_content(prompt)
             raw = resp.text.strip()
 
         else:
-            return {}
+            return {}, f"bilinmeyen provider: {ai_provider}"
 
-        # JSON ayıkla — bazen ```json ... ``` içinde gelir
+        # JSON ayıkla — güvenli parse
         if "```" in raw:
             raw = re.sub(r"```(?:json)?", "", raw).replace("```", "").strip()
-        # İlk { ... } bloğunu al
         m = re.search(r"\{.*\}", raw, re.DOTALL)
         if not m:
-            return {}
+            return {}, f"JSON bulunamadı (raw: {raw[:80]})"
         data = json.loads(m.group())
-        # Sadece beklenen anahtarları döndür
-        return {k: str(v).strip() for k, v in data.items() if k in _LLM_KEYS}
+        result = {k: str(v).strip() for k, v in data.items()
+                  if k in _LLM_KEYS and str(v).strip() not in ("", "null", "None")}
+        return result, ""
 
-    except Exception:
-        return {}
+    except json.JSONDecodeError as e:
+        return {}, f"JSON parse hatası: {e} | raw: {raw[:80]}"
+    except Exception as e:
+        return {}, f"{type(e).__name__}: {e}"
 
 
 def _extract_from_abstract(abstract: str, default_unit: str = "µM",
-                            ai_key: str = "", ai_provider: str = "Claude") -> dict:
+                            ai_key: str = "", ai_provider: str = "Claude",
+                            gemini_model: str = "gemini-2.0-flash") -> dict:
     """
     Önce LLM ile çıkarım dener (ai_key varsa).
     LLM'in atladığı alanlar için regex ile tamamlar.
@@ -164,7 +175,8 @@ def _extract_from_abstract(abstract: str, default_unit: str = "µM",
 
     # ── 1. LLM çıkarım ────────────────────────────────────────────────────────
     if ai_key:
-        llm = _extract_with_llm(abstract, ai_key, ai_provider)
+        llm, _llm_err = _extract_with_llm(abstract, ai_key, ai_provider,
+                                           gemini_model=gemini_model)
         for k in result:
             if llm.get(k):
                 result[k] = llm[k]
@@ -293,7 +305,8 @@ def _scopus_search_with_view(analyte: str, electrode: str, year_from: int,
 
 def _parse_scopus_entries(entries: list, api_key: str = "",
                            fetch_missing: bool = True,
-                           ai_key: str = "", ai_provider: str = "Claude") -> tuple[list, int]:
+                           ai_key: str = "", ai_provider: str = "Claude",
+                           gemini_model: str = "gemini-2.0-flash") -> tuple[list, int]:
     """Girişleri satıra çevirir. (rows, abstract_found_count) döner."""
     rows = []
     abstract_found = 0
@@ -323,7 +336,8 @@ def _parse_scopus_entries(entries: list, api_key: str = "",
 
         ref_str = (authors.split(",")[0].strip() + f" et al., {year}"
                    if authors else year)
-        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider)
+        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider,
+                                         gemini_model=gemini_model)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -378,7 +392,8 @@ def _reconstruct_abstract(inv_index: dict | None) -> str:
 
 
 def _parse_oa_entries(entries: list, ai_key: str = "",
-                      ai_provider: str = "Claude") -> tuple[list, int]:
+                      ai_provider: str = "Claude",
+                      gemini_model: str = "gemini-2.0-flash") -> tuple[list, int]:
     rows = []
     abstract_found = 0
     for e in entries:
@@ -395,7 +410,8 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
         _has_abs = bool(abstract)
         if _has_abs:
             abstract_found += 1
-        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider)
+        metrics = _extract_from_abstract(abstract, ai_key=ai_key, ai_provider=ai_provider,
+                                         gemini_model=gemini_model)
         rows.append({
             "Electrode/Modifier": metrics["Electrode"] or "—",
             "Method":             metrics["Method"]    or "—",
@@ -413,14 +429,15 @@ def _parse_oa_entries(entries: list, ai_key: str = "",
 
 # ── Ana fonksiyon ──────────────────────────────────────────────────────────────
 def fetch_literature(
-    analyte:     str,
-    electrode:   str = "",
-    year_from:   int = 2018,
-    max_results: int = 20,
-    scopus_key:  str = "",
+    analyte:      str,
+    electrode:    str = "",
+    year_from:    int = 2018,
+    max_results:  int = 20,
+    scopus_key:   str = "",
     prefer_openalex: bool = False,
-    ai_key:      str = "",
-    ai_provider: str = "Claude",
+    ai_key:       str = "",
+    ai_provider:  str = "Claude",
+    gemini_model: str = "gemini-2.0-flash",
 ) -> tuple[list[dict], dict]:
     """
     Döner: (rows, status)
@@ -447,7 +464,8 @@ def fetch_literature(
         if oa_err:
             status["error"] = oa_err
             return [], status
-        rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key, ai_provider=ai_provider)
+        rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key,
+                                            ai_provider=ai_provider, gemini_model=gemini_model)
         status.update({"source": "OpenAlex", "count": len(rows),
                        "abstract_found": abs_found})
         return rows[:max_results], status
@@ -470,7 +488,8 @@ def fetch_literature(
         elif entries:
             rows, abs_found = _parse_scopus_entries(
                 entries, scopus_key, fetch_missing=True,
-                ai_key=ai_key, ai_provider=ai_provider)
+                ai_key=ai_key, ai_provider=ai_provider,
+                gemini_model=gemini_model)
             rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
             status.update({"source": "Scopus", "count": len(rows),
                            "abstract_found": abs_found})
@@ -485,7 +504,8 @@ def fetch_literature(
             status["error"] = oa_err
         return [], status
 
-    rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key, ai_provider=ai_provider)
+    rows, abs_found = _parse_oa_entries(oa_entries, ai_key=ai_key,
+                                        ai_provider=ai_provider, gemini_model=gemini_model)
     rows = [r for r in rows if r.get("Reference") and r.get("Reference") != "—"]
     status.update({"source": "OpenAlex", "count": len(rows),
                    "abstract_found": abs_found})
