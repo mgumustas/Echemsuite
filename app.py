@@ -4407,7 +4407,17 @@ elif page == "📚  Literature Comparison":
                     _lf_spec.loader.exec_module(_lf_mod)
 
                     _prefer_oa = (_fetch_src == "OpenAlex only")
-                    with st.spinner("Searching Scopus / OpenAlex…"):
+                    # Aktif AI sağlayıcısının key'ini al
+                    _ai_prov   = st.session_state.get("ai_provider", "Claude")
+                    _ai_key_map = {
+                        "Claude":  st.session_state.get("api_key", ""),
+                        "OpenAI":  st.session_state.get("openai_api_key", ""),
+                        "Gemini":  st.session_state.get("gemini_api_key", ""),
+                    }
+                    _ai_key = _ai_key_map.get(_ai_prov, "")
+                    _spin_msg = ("🤖 AI ile analiz ediliyor (bu biraz uzun sürebilir)…"
+                                 if _ai_key else "Scopus / OpenAlex aranıyor…")
+                    with st.spinner(_spin_msg):
                         _fetched, _fstatus = _lf_mod.fetch_literature(
                             analyte=_fetch_analyte.strip(),
                             electrode=_fetch_electrode.strip(),
@@ -4415,6 +4425,8 @@ elif page == "📚  Literature Comparison":
                             max_results=int(_fetch_n),
                             scopus_key=st.session_state.get("scopus_api_key", ""),
                             prefer_openalex=_prefer_oa,
+                            ai_key=_ai_key,
+                            ai_provider=_ai_prov,
                         )
 
                     # Uyarıları göster
@@ -4424,16 +4436,16 @@ elif page == "📚  Literature Comparison":
                     if _fstatus.get("error") and not _fetched:
                         st.error(f"❌ {_fstatus['error']}")
                     elif _fetched:
-                        _abs_n = _fstatus.get("abstract_found", 0)
-                        _tot_n = _fstatus.get("count", len(_fetched))
+                        _abs_n  = _fstatus.get("abstract_found", 0)
+                        _tot_n  = _fstatus.get("count", len(_fetched))
+                        _ai_tag = f" · 🤖 {_ai_prov} ile analiz edildi" if _ai_key else ""
                         st.success(
                             f"✅ {_tot_n} papers found via **{_fstatus.get('source','?')}** — "
-                            f"{_abs_n}/{_tot_n} abstracts parsed for LOD/LR/sensitivity."
+                            f"{_abs_n}/{_tot_n} abstracts parsed{_ai_tag}."
                         )
                         if _abs_n == 0:
                             st.info(
                                 "No abstracts returned — LOD/LR columns will be empty. "
-                                "This usually means the API key lacks COMPLETE view access. "
                                 "Try OpenAlex only, or check your Scopus institutional access."
                             )
                         st.session_state["lit_fetched_rows"] = _fetched
